@@ -1,0 +1,156 @@
+# Hunty
+
+Свой мессенджер для своих: чат, голос, вебки и демки экрана **напрямую между друзьями**, без серверов и аккаунтов.
+Чёрный фон, «жидкое стекло», консольный вайб (tmux-строка снизу), мобы из майнкрафта вместо аватарок.
+
+- **Без регистрации.** Акк = ключ Ed25519, который создаётся у тебя на компе. Ник и моба выбираешь при первом запуске (моба выдаёт система, можно крутить ещё).
+- **Друзья** — по нику (если друг в сети), по коду `hunty://add/…`, QR-коду или «рядом, в локалке».
+- **Чаты**: личка и группы (до 6 в голосе), стикеры, картинки, файлы, @упоминания, «печатает…». История хранится у всех участников и докачивается, когда кто-то появляется в сети.
+- **Голос** (WebRTC, Opus), **вебки**, **демка экрана** с рисованием поверх, метками, реакциями и сменой «кого смотрю». Звонок в личке. Мини-окно звонка, которое можно таскать и ресайзить.
+- **Сеть**: libp2p. Поиск друзей через публичный IPFS DHT, в локалке — mDNS, дальше UPnP → hole punching (DCUtR) → ретранслятор (relay, в том числе через друзей). STUN — публичный (Google), TURN нет.
+- Пасхалки и AFK-Стив 🙂
+
+## Как выглядит
+
+| | |
+|---|---|
+| ![Регистрация](docs/screens/01-registration.jpg) | ![Демка с рисованием](docs/screens/02-demo-draw.jpg) |
+| ![Звонок в личке](docs/screens/03-dm-call.jpg) | ![Мини-окно звонка](docs/screens/04-mini-call.jpg) |
+| ![Инвайт в группу](docs/screens/05-invite.jpg) | ![Настройки](docs/screens/06-settings.jpg) |
+
+## Скачать
+
+Всё лежит в **Releases** этого репозитория (собирает GitHub Actions, бесплатно).
+
+**Windows 10/11** — обычная программа:
+- `Hunty_x.y.z_x64-setup.exe` — установщик (ставится в профиль пользователя, админ не нужен);
+- `Hunty-portable.exe` — один файл, просто запустить.
+
+WebView2 в Windows 10/11 уже есть (установщик докачает его, если вдруг нет). Exe не подписан, поэтому SmartScreen может написать
+«Windows защитил ваш компьютер» → **Подробнее → Выполнить в любом случае**.
+При первом звонке Windows может спросить про доступ к сети для Hunty — разреши для частных сетей, иначе друзья в локалке не увидят друг друга.
+
+**Linux** — `hunty-linux-x64.tar.gz`, режим «в браузере»: один статический файл (ядро + интерфейс внутри),
+открывается в Chrome/Chromium/Brave/Edge/Firefox по адресу `http://127.0.0.1:7457`. Работает на любом x86_64-дистрибутиве.
+
+```
+tar xzf hunty-linux-x64.tar.gz
+./hunty/hunty                         # запустить и открыть в браузере
+./hunty/hunty --install               # поставить в ~/.local/bin + ярлык «Hunty» в меню приложений
+./hunty/hunty --install --autostart   # ...и запускать в фоне при входе в систему
+```
+
+Сеть одна и та же: Windows и Linux видят друг друга — коды `hunty://add/…`, ники, группы, голос, вебки и демки общие.
+Ядро живёт, пока Hunty открыт в браузере (и ещё минуту после), с `--autostart`/`--background` — всегда.
+Выключить — **Настройки → О Hunty → Выключить Hunty**. Свой браузер — `HUNTY_BROWSER=firefox hunty`, обычной вкладкой — `--tab`.
+Данные — `~/.local/share/hunty`. Подробнее — [docs/README-linux.txt](docs/README-linux.txt) (он же `README.txt` в архиве).
+
+**macOS** — тот же браузерный режим, пока только из исходников: `cargo build --release -p hunty-node` → `target/release/hunty-node` (не проверялось).
+
+> Почему не просто сайт? Браузер сам не может быть P2P-узлом: ему нельзя открывать TCP/UDP-порты, ходить в DHT и пробивать NAT.
+> Для «чистого сайта» нужен был бы сервер-посредник (и он бы видел, кто с кем общается). Поэтому на Linux — маленькое
+> локальное ядро, а интерфейс тот же, что в exe. Наружу интерфейс не торчит: слушает только `127.0.0.1`, чужие сайты к ядру подключиться не могут.
+
+## Как залить на GitHub и выпустить релиз
+
+Для публичного репозитория GitHub Actions и Releases бесплатные. Платное только одно и необязательное — подпись exe (убирает предупреждение SmartScreen).
+
+1. github.com → **New repository** → имя, например, `hunty`, **Public**, без README/лицензии (они уже есть) → **Create repository**.
+2. В папке проекта (нужен [git](https://git-scm.com)):
+   ```
+   git init -b main
+   git add .
+   git commit -m "Hunty 0.1.0"
+   git remote add origin https://github.com/<ник>/hunty.git
+   git push -u origin main
+   ```
+   Если git ругается «Please tell me who you are» — один раз `git config --global user.name "ник"` и `git config --global user.email "почта"`.
+   При первом push откроется окно входа в GitHub.
+   Без командной строки — [GitHub Desktop](https://desktop.github.com): File → Add local repository → папка проекта →
+   «create a repository» → Publish repository (сними галку «Keep this code private»). Тогда шаг 1 не нужен.
+3. Выпустить версию — поставить тег и запушить его:
+   ```
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+   Или на сайте: **Releases → Draft a new release → Choose a tag** → впиши `v0.1.0` → Create new tag → **Publish release**
+   (файлы догрузятся в этот релиз сами, когда Actions дособерёт).
+4. Вкладка **Actions** → workflow `release`: Windows собирается ~15–20 мин, Linux ~5–10. Когда всё зелёное,
+   в **Releases** появится `v0.1.0` с файлами `Hunty_0.1.0_x64-setup.exe`, `Hunty-portable.exe`, `hunty-linux-x64.tar.gz`.
+5. Друзьям — ссылку `https://github.com/<ник>/hunty/releases/latest`.
+
+Адрес репозитория для «Проверить обновления» CI подставляет сам (`REPO` в `ui/js/settings.js`) — руками ничего менять не надо.
+Следующая версия — новый тег (`v0.1.1` …): у всех в **Настройки → О Hunty** появится «вышла v0.1.1 · скачать».
+
+Без тега можно запустить вручную: **Actions → release → Run workflow** — файлы будут в артефактах сборки, релиз не создаётся.
+
+## Сборка у себя (Windows)
+
+```
+# один раз: Rust (https://rustup.rs) и Node.js 18+
+cd src-tauri
+npx @tauri-apps/cli@2 build      # → target/release/hunty.exe и target/release/bundle/nsis/*-setup.exe
+npx @tauri-apps/cli@2 dev        # запуск в режиме разработки
+```
+
+Второй Hunty на том же компе (второй акк для тестов): `set HUNTY_DATA=C:\temp\hunty2 && hunty.exe`.
+
+## Сборка у себя (Linux/macOS, браузерный режим)
+
+```
+# один раз: Rust (https://rustup.rs)
+cargo build --release -p hunty-node      # → target/release/hunty-node, интерфейс вшит внутрь
+./target/release/hunty-node              # = hunty: ядро + http://127.0.0.1:7457 в браузере
+cargo build --release --target x86_64-unknown-linux-musl -p hunty-node   # статический, как в релизе (нужен musl-tools)
+```
+
+## Разработка (любая ОС)
+
+Для разработки UI удобнее отдельные порты и UI с диска (правки видны по F5, без пересборки):
+
+```
+cargo run -p hunty-node -- --data ./data-a --ws 7457 --http 8457 --ui ui
+# открыть http://127.0.0.1:8457/?ws=7457
+```
+
+Флаги узла: `--port N` (порт libp2p), `--local` (только 127.0.0.1), `--no-mdns`, `--no-dht`, `--no-upnp`, `--no-relay`,
+`--nick ник --ava mob:pig` (сразу зарегистрироваться), `--events` (печатать события).
+
+UI — обычные ES-модули без сборщика. После правок разметки: `python3 ui/tools/build.py` (собирает `ui/index.html` из `ui/tools/index.src.html` + иконки).
+
+Тесты ядра (нужен Node 22+):
+```
+cargo build -p hunty-node
+node tests/core.mjs    # 3 узла: дружба, личка, группа, инвайт, синк истории, голос/сигналинг
+node tests/dht.mjs     # поиск друга по нику через DHT
+```
+
+UI e2e (Playwright, 3 узла + headless Chromium с фейковыми камерой/микрофоном/экраном):
+```
+npm i && npx playwright install chromium
+node tests/ui.mjs              # всё: регистрация, голос, вебка, демка с рисованием, мини-окно, звонок в личке, окна
+node tests/ui.mjs dm voice     # выборочно: onboard | voice | dm | win; slow — со стеклом и бут-анимацией
+node tests/ui.mjs voice dm ff  # второй участник в Firefox (Chromium ⇄ Firefox), нужен npx playwright install firefox
+```
+Скриншоты складываются в `tests/shots/`.
+
+## Устройство
+
+```
+crates/hunty-core   ядро: ключ, друзья, комнаты, история (JSON/JSONL), libp2p-сеть, протокол /hunty/1, сигналинг WebRTC
+crates/hunty-node   Hunty для Linux/macOS (ядро + вшитый UI, http+ws на 127.0.0.1) и узел для разработки и e2e-тестов
+src-tauri           окно приложения: ядро в том же процессе, команда `hunty` и событие `hunty`
+ui                  интерфейс: index.html, css/, js/ (WebRTC-меш голоса и демок живёт тут)
+tests               e2e-тесты ядра (core, dht) и интерфейса (ui, Playwright)
+```
+
+Данные лежат в `%APPDATA%\app.hunty` на Windows и `~/.local/share/hunty` на Linux (ключ, друзья, история, `hunty.log`). Бэкап акка — **Настройки → Акк → Сохранить ключ** (файл с ключом, друзьями и группами; храни его как пароль).
+
+## Ограничения
+
+- **Нет TURN.** Если у обоих строгий (симметричный) NAT, голос/видео напрямую не пробьётся — чат при этом работает через ретранслятор. Помогает UPnP на роутере или проброс порта (Настройки → Сеть).
+- Mesh: в голосе до 6 человек — каждый шлёт поток каждому.
+- Ник уникален только среди тех, кто в сети: два человека могут взять один ник, различаются по ключу (виден в профиле).
+- Хоткеи работают, когда окно Hunty активно (глобальных пока нет).
+- Linux/macOS — через браузер: нет иконки в трее, а уведомления и доступ к микрофону/экрану — браузерные (спросит разрешение).
+- Exe не подписан — SmartScreen ругается при первом запуске (подпись кода платная).

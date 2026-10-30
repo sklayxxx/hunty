@@ -1,0 +1,23 @@
+[package]
+name = "hunty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hunty — свой P2P-мессенджер для друзей (оболочка Tauri)"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+hunty-core = { path = "../crates/hunty-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time"] }
+base64 = "0.22"
+open = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"

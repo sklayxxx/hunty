@@ -1,0 +1,140 @@
+# Сборка Hunty и выкладка в GitHub Releases (для публичного репозитория — бесплатно).
+#   Windows: установщик NSIS + portable exe (Tauri)
+#   Linux:   один статический бинарник hunty (ядро + интерфейс в браузере), работает на любом x86_64-дистрибутиве
+# Запуск: запушить тег вида v0.1.0  (git tag v0.1.0 && git push origin v0.1.0)
+# или вручную во вкладке Actions → release → Run workflow (тогда файлы только в артефактах, без релиза).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Адрес репозитория для проверки обновлений
+        shell: bash
+        run: |
+          sed -i "s#^export const REPO = '';#export const REPO = '${GITHUB_REPOSITORY}';#" ui/js/settings.js
+          grep -n "export const REPO" ui/js/settings.js
+          python ui/tools/build.py
+
+      - name: Версия из тега
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"[^\"]*\"/version = \"$V\"/" Cargo.toml
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$V\"/" src-tauri/tauri.conf.json
+
+      - name: Сборка (tauri build → установщик NSIS)
+        run: npx --yes @tauri-apps/cli@^2 build
+        working-directory: src-tauri
+
+      - name: Собрать файлы релиза
+        shell: bash
+        run: |
+          mkdir -p out
+          cp target/release/bundle/nsis/*-setup.exe out/
+          cp target/release/hunty.exe out/Hunty-portable.exe
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hunty-windows
+          path: out/*
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: musl (статическая сборка — без зависимости от версии glibc)
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Адрес репозитория для проверки обновлений
+        run: |
+          sed -i "s#^export const REPO = '';#export const REPO = '${GITHUB_REPOSITORY}';#" ui/js/settings.js
+          grep -n "export const REPO" ui/js/settings.js
+          python3 ui/tools/build.py
+
+      - name: Версия из тега
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \"[^\"]*\"/version = \"$V\"/" Cargo.toml
+
+      - name: Сборка (hunty-node с вшитым интерфейсом)
+        run: |
+          mkdir -p pkg/hunty
+          if cargo build --release --target x86_64-unknown-linux-musl -p hunty-node; then
+            cp target/x86_64-unknown-linux-musl/release/hunty-node pkg/hunty/hunty
+          else
+            echo "::warning::musl-сборка не вышла — собираю под glibc (запустится на дистрибутивах с glibc 2.35+)"
+            cargo build --release -p hunty-node
+            cp target/release/hunty-node pkg/hunty/hunty
+          fi
+
+      - name: Собрать архив
+        run: |
+          mkdir -p out
+          cp docs/README-linux.txt pkg/hunty/README.txt
+          chmod +x pkg/hunty/hunty
+          pkg/hunty/hunty --version
+          tar -C pkg -czf out/hunty-linux-x64.tar.gz hunty
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hunty-linux
+          path: out/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - run: ls -la out
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          body: |
+            **Windows 10/11** — `Hunty_…_x64-setup.exe` (установщик, админ не нужен) или `Hunty-portable.exe` (просто запустить).
+            Если SmartScreen пишет «Windows защитил ваш компьютер» → «Подробнее» → «Выполнить в любом случае» (exe не подписан).
+
+            **Linux** — `hunty-linux-x64.tar.gz`: один файл, интерфейс открывается в браузере.
+            ```
+            tar xzf hunty-linux-x64.tar.gz
+            ./hunty/hunty                         # запустить
+            ./hunty/hunty --install --autostart   # в меню приложений + автозапуск (по желанию)
+            ```
+
+            Сеть общая: Windows и Linux видят друг друга, друзья, группы и звонки — те же.

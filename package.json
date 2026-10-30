@@ -1,0 +1,14 @@
+{
+  "name": "hunty-dev",
+  "private": true,
+  "description": "Только для тестов: e2e ядра и UI. Само приложение собирается через cargo/tauri.",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/core.mjs",
+    "test:dht": "node tests/dht.mjs",
+    "test:ui": "node tests/ui.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

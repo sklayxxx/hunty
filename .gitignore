@@ -1,0 +1,6 @@
+/target
+/src-tauri/gen/schemas
+/src-tauri/target
+node_modules
+*.log
+/tests/shots

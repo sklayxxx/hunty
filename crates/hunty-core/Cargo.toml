@@ -1,0 +1,19 @@
+[package]
+name = "hunty-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hunty: P2P-ядро (libp2p) — личность, хаты, сообщения, сигналинг"
+
+[dependencies]
+libp2p = { version = "0.57", features = ["tokio", "tcp", "quic", "dns", "noise", "yamux", "mdns", "kad", "identify", "ping", "relay", "dcutr", "autonat", "upnp", "request-response", "json", "macros", "ed25519", "rsa", "ecdsa", "secp256k1", "serde"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+futures = "0.3"
+tracing = "0.1"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
