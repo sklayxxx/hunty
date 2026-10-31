@@ -49,13 +49,27 @@ export function profileOf(peer) {
 }
 export const nickOf = peer => profileOf(peer).nick || short(peer);
 export const avaOf = peer => avaURL(profileOf(peer).ava, peer);
-const PAL = ['#9db7ff', '#ffb36b', '#ff94b8', '#63e6ff', '#ffd36b', '#b8f59a', '#d6a8ff', '#ff9f8f'];
+export const PAL = ['#9db7ff', '#ffb36b', '#ff94b8', '#63e6ff', '#ffd36b', '#b8f59a', '#d6a8ff', '#ff9f8f'];
+/** цвет ника: свой из профиля, иначе — стабильный из палитры по ключу (и у себя тоже: белый сливался с упоминаниями) */
+export const autoColor = peer => { let h = 0; for (const ch of String(peer)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PAL[h % PAL.length]; };
 export function colorOf(peer) {
-  const c = profileOf(peer).color; if (c) return c;
-  if (S.me && peer === S.me.peer) return 'var(--acc)';
-  let h = 0; for (const ch of String(peer)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PAL[h % PAL.length];
+  const c = profileOf(peer).color; if (c && /^#[0-9a-f]{3,8}$/i.test(c)) return c;
+  return autoColor(peer);
 }
+/** ник → peer (друзья, участники групп, я) — для цвета упоминаний */
+export function peerByNick(n) {
+  n = String(n || '').toLowerCase(); if (!n) return '';
+  if (S.me && S.me.profile && S.me.profile.nick === n) return S.me.peer;
+  for (const f of S.friends.values()) if (f.profile && f.profile.nick === n) return f.peer;
+  for (const r of S.rooms.values()) for (const m of r.members || []) if (m.nick === n) return m.peer;
+  return '';
+}
+export const colorByNick = n => { const p = peerByNick(n); return p ? colorOf(p) : ''; };
 export const isOnline = peer => !!(S.me && peer === S.me.peer) || S.online.has(peer);
+/** статус человека: '' (в сети) | away | dnd | inv (невидимка — друзьям показываемся не в сети) */
+export function statusOf(peer) { const st = profileOf(peer).status || ''; return ['away', 'dnd', 'inv'].includes(st) ? st : ''; }
+/** «в сети» для глаз: невидимку показываем не в сети (сообщения ему всё равно доходят напрямую) */
+export const shownOnline = peer => isOnline(peer) && (statusOf(peer) !== 'inv' || !!(S.me && peer === S.me.peer));
 export const friendOf = peer => S.friends.get(peer);
 export const isFriend = peer => (S.friends.get(peer) || {}).state === 'friend';
 export function dmPeer(r) {

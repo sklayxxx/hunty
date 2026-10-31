@@ -160,6 +160,268 @@ fn hunty_focused(window: WebviewWindow) -> bool {
     window.is_focused().unwrap_or(true)
 }
 
+/* ---------- система: «играет в…» и хоткеи в играх (без хуков и без отбора клавиш у игры) ---------- */
+mod sys {
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use tauri::{AppHandle, Emitter};
+
+    /// что за клавиши слушаем (VK-коды Windows); пусто — поток спит
+    static KEYS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+    static STARTED: Mutex<bool> = Mutex::new(false);
+
+    #[cfg(windows)]
+    mod win {
+        #[repr(C)]
+        #[allow(non_snake_case)]
+        pub struct ProcessEntry32W {
+            pub dwSize: u32,
+            pub cntUsage: u32,
+            pub th32ProcessID: u32,
+            pub th32DefaultHeapID: usize,
+            pub th32ModuleID: u32,
+            pub cntThreads: u32,
+            pub th32ParentProcessID: u32,
+            pub pcPriClassBase: i32,
+            pub dwFlags: u32,
+            pub szExeFile: [u16; 260],
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> isize;
+            fn Process32FirstW(snap: isize, pe: *mut ProcessEntry32W) -> i32;
+            fn Process32NextW(snap: isize, pe: *mut ProcessEntry32W) -> i32;
+            fn CloseHandle(h: isize) -> i32;
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetAsyncKeyState(vk: i32) -> i16;
+        }
+        /// имена запущенных .exe (только имена — никуда не уходят, UI ищет среди них игры)
+        pub fn procs() -> Vec<String> {
+            let mut out = Vec::new();
+            // SAFETY: обычный обход снимка процессов Toolhelp32; структура инициализирована, размер выставлен
+            unsafe {
+                let snap = CreateToolhelp32Snapshot(0x2, 0);
+                if snap == -1 || snap == 0 {
+                    return out;
+                }
+                let mut pe: ProcessEntry32W = std::mem::zeroed();
+                pe.dwSize = std::mem::size_of::<ProcessEntry32W>() as u32;
+                let mut ok = Process32FirstW(snap, &mut pe);
+                while ok != 0 {
+                    let n = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(260);
+                    out.push(String::from_utf16_lossy(&pe.szExeFile[..n]).to_lowercase());
+                    ok = Process32NextW(snap, &mut pe);
+                }
+                CloseHandle(snap);
+            }
+            out
+        }
+        pub fn down(vk: i32) -> bool {
+            // SAFETY: GetAsyncKeyState только читает состояние клавиши
+            unsafe { (GetAsyncKeyState(vk) as u16 & 0x8000) != 0 }
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn procs() -> Vec<String> {
+        win::procs()
+    }
+    #[cfg(target_os = "linux")]
+    pub fn procs() -> Vec<String> {
+        let mut out = Vec::new();
+        if let Ok(rd) = std::fs::read_dir("/proc") {
+            for e in rd.flatten() {
+                if let Ok(c) = std::fs::read_to_string(e.path().join("comm")) {
+                    out.push(c.trim().to_lowercase());
+                }
+            }
+        }
+        out
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    pub fn procs() -> Vec<String> {
+        Vec::new()
+    }
+
+    /// следить за клавишами: шлёт в окно событие "hunty-key" {vk, down} при каждом нажатии/отпускании.
+    /// Опрос состояния раз в 12 мс — клавиша остаётся у игры, античиты такое не трогают.
+    pub fn watch(app: AppHandle, vks: Vec<i32>) -> Result<bool, String> {
+        if !cfg!(windows) {
+            return Ok(false);
+        }
+        *KEYS.lock().map_err(|e| e.to_string())? = vks.into_iter().filter(|v| (1..=254).contains(v)).take(16).collect();
+        let mut st = STARTED.lock().map_err(|e| e.to_string())?;
+        if !*st {
+            *st = true;
+            std::thread::Builder::new()
+                .name("hunty-keys".into())
+                .spawn(move || poll(app))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(true)
+    }
+    #[allow(unused_variables, unused_mut)]
+    fn poll(app: AppHandle) {
+        let mut prev: Vec<(i32, bool)> = Vec::new();
+        loop {
+            let keys = KEYS.lock().map(|k| k.clone()).unwrap_or_default();
+            if keys.is_empty() {
+                prev.clear();
+                std::thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+            #[cfg(windows)]
+            for vk in keys {
+                let d = win::down(vk);
+                let was = prev.iter().find(|(k, _)| *k == vk).map(|(_, x)| *x);
+                if was != Some(d) {
+                    if was.is_some() || d {
+                        let _ = app.emit("hunty-key", serde_json::json!({ "vk": vk, "down": d }));
+                    }
+                    prev.retain(|(k, _)| *k != vk);
+                    prev.push((vk, d));
+                }
+            }
+            std::thread::sleep(Duration::from_millis(12));
+        }
+    }
+}
+
+/// имена запущенных программ — для статуса «играет в…» (сопоставляет UI, наружу уходит только название игры)
+#[tauri::command]
+async fn hunty_procs() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(sys::procs).await.unwrap_or_default()
+}
+
+/// хоткеи в играх: список VK-кодов, за которыми следить (пусто — перестать)
+#[tauri::command]
+fn hunty_keys(app: AppHandle, vks: Vec<i32>) -> Result<bool, String> {
+    sys::watch(app, vks)
+}
+
+/* ---------- обновление в один клик: качаем exe с GitHub Releases, после выхода ставим и запускаем ---------- */
+const UPD_PREFIX: &str = "https://github.com/sklayxxx/hunty/releases/download/";
+
+fn upd_path() -> PathBuf {
+    std::env::temp_dir().join("hunty-update.exe")
+}
+
+/// как стоит Hunty: "setup" — через установщик (рядом uninstall.exe), "portable" — просто exe
+#[tauri::command]
+fn hunty_upd_mode() -> String {
+    let inst = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("uninstall.exe").exists())).unwrap_or(false);
+    if inst { "setup".into() } else { "portable".into() }
+}
+
+#[cfg(windows)]
+fn psq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn powershell(script: &str) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script])
+        .creation_flags(0x0800_0000 | 0x0000_0200) // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+}
+
+/// скачать новую версию (события "hunty-upd": {got} пока качается, потом {ok} или {err})
+#[tauri::command]
+fn hunty_update_get(app: AppHandle, url: String, size: u64) -> Result<(), String> {
+    if !url.starts_with(UPD_PREFIX) || !url.to_ascii_lowercase().ends_with(".exe") {
+        return Err("странная ссылка на обновление".into());
+    }
+    #[cfg(windows)]
+    {
+        let out = upd_path();
+        let _ = std::fs::remove_file(&out);
+        let script = format!(
+            "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;Invoke-WebRequest -UseBasicParsing -Uri {} -OutFile {}",
+            psq(&url),
+            psq(&out.to_string_lossy())
+        );
+        let mut child = powershell(&script).map_err(|e| format!("PowerShell не запустился: {e}"))?;
+        std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            loop {
+                let got = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+                match child.try_wait() {
+                    Ok(Some(st)) => {
+                        let ok = st.success() && (size == 0 || got == size) && std::fs::read(&out).map(|b| b.starts_with(b"MZ")).unwrap_or(false);
+                        let _ = if ok {
+                            app.emit("hunty-upd", json!({ "ok": true, "got": got }))
+                        } else {
+                            let _ = std::fs::remove_file(&out);
+                            app.emit("hunty-upd", json!({ "err": if st.success() { "файл скачался битым — попробуй ещё раз" } else { "не скачалось — проверь интернет" } }))
+                        };
+                        return;
+                    }
+                    Ok(None) if t0.elapsed() > Duration::from_secs(600) => {
+                        let _ = child.kill();
+                        let _ = app.emit("hunty-upd", json!({ "err": "качается слишком долго — попробуй позже" }));
+                        return;
+                    }
+                    Ok(None) => {
+                        let _ = app.emit("hunty-upd", json!({ "got": got }));
+                    }
+                    Err(e) => {
+                        let _ = app.emit("hunty-upd", json!({ "err": e.to_string() }));
+                        return;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        });
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, size);
+        Err("обновление в один клик — только в версии для Windows".into())
+    }
+}
+
+/// поставить скачанное: Hunty закрывается, обновление ставится и запускает Hunty заново
+#[tauri::command]
+async fn hunty_update_run(app: AppHandle, core: CoreS<'_>) -> Result<(), String> {
+    let new = upd_path();
+    if !new.exists() {
+        return Err("обновление ещё не скачано".into());
+    }
+    #[cfg(windows)]
+    {
+        let pid = std::process::id();
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let script = if hunty_upd_mode() == "setup" {
+            // установщик NSIS: /P — без вопросов, только полоска; /R — запустить Hunty после установки
+            format!("Wait-Process -Id {pid} -Timeout 30 -ErrorAction SilentlyContinue;Start-Process -FilePath {} -ArgumentList '/P','/R'", psq(&new.to_string_lossy()))
+        } else {
+            let e = psq(&exe.to_string_lossy());
+            format!(
+                "Wait-Process -Id {pid} -Timeout 30 -ErrorAction SilentlyContinue;Start-Sleep -Milliseconds 400;for($i=0;$i -lt 20;$i++){{try{{Copy-Item -Force {} {e} -ErrorAction Stop;break}}catch{{Start-Sleep -Milliseconds 500}}}};Start-Process -FilePath {e}",
+                psq(&new.to_string_lossy())
+            )
+        };
+        powershell(&script).map_err(|e| format!("PowerShell не запустился: {e}"))?;
+        core.restarting.store(true, Ordering::SeqCst);
+        stop_core(&core).await;
+        app.exit(0);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, core);
+        Err("только Windows".into())
+    }
+}
+
 async fn stop_core(core: &Core) {
     let h = core.h.write().await.take();
     if let Some(h) = h {
@@ -310,7 +572,12 @@ fn main() {
             hunty_reveal,
             hunty_restart,
             hunty_attention,
-            hunty_focused
+            hunty_focused,
+            hunty_procs,
+            hunty_keys,
+            hunty_upd_mode,
+            hunty_update_get,
+            hunty_update_run
         ])
         .setup(move |app| {
             #[cfg(windows)]

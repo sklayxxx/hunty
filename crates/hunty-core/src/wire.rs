@@ -94,6 +94,7 @@ impl Node {
             kind: "dm".into(),
             name: String::new(),
             color: String::new(),
+            pic: String::new(),
             secret: String::new(),
             owner: String::new(),
             members: Default::default(),
@@ -328,6 +329,7 @@ impl Node {
             kind: r.kind.clone(),
             name: r.name.clone(),
             color: r.color.clone(),
+            pic: r.pic.clone(),
             secret: if secret { r.secret.clone() } else { String::new() },
             owner: r.owner.clone(),
             members: r.members.values().cloned().collect(),
@@ -399,6 +401,7 @@ impl Node {
         if w.meta_ts > r.meta_ts && sender_admin {
             r.name = w.name;
             r.color = w.color;
+            r.pic = w.pic;
             r.invite = w.invite;
             r.voice = w.voice;
             r.meta_ts = w.meta_ts;
@@ -435,6 +438,7 @@ impl Node {
                     kind: w.kind.clone(),
                     name: w.name.clone(),
                     color: w.color.clone(),
+                    pic: w.pic.clone(),
                     secret: w.secret.clone(),
                     owner: w.owner.clone(),
                     members: w.members.iter().map(|m| (m.peer.clone(), m.clone())).collect(),
@@ -719,6 +723,7 @@ impl Node {
                     r.kind = w.kind.clone();
                     r.name = w.name.clone();
                     r.color = w.color.clone();
+                    r.pic = w.pic.clone();
                     r.invite = w.invite.clone();
                     r.voice = w.voice;
                     r.meta_ts = w.meta_ts;

@@ -40,15 +40,19 @@ export const bus = {
 };
 
 /* ---------- локальные настройки (только у тебя на компе) ---------- */
-const PDEF = {
+export const PDEF = {
   micId: '', outId: '', camId: '', micVol: 100, outVol: 100, ptt: 0, ns: true, ec: true, agc: true, bitrate: 64,
   camRes: 720, camMirror: true, shareRes: 1080, shareFps: 30, shareAudio: false, shareDraw: 'all', pinTtl: 10, shareHint: 'detail',
   glass: 'liquid', glassA: 60, scale: 100, boot: true, liveBg: false, lite: false, gate: 'auto', gateDb: -50,
   sound: true, say: false, voiceName: '', notifVol: 70, dnd: 0, mentionsOnly: false, friendOnline: true, flash: true,
   vol: {}, mute: {}, pinned: [], lastChat: '', eggs: [],
+  // v0.3
+  tabs: [], emoRecent: [], stkRecent: [], favs: [], font: 'soft', wall: '', wallBlur: 24, wallDim: 55,
+  selfMute: false, selfDeaf: false, nsMode: 'rnnoise', fx: '', linkPrev: true, awayAfter: 10, autoAway: false,
+  pttKey: '', pttGlobal: false, sbVol: 70, gameScan: true, msgSize: 15,
 };
 export const prefs = Object.assign({}, PDEF);
-try { Object.assign(prefs, JSON.parse(localStorage.getItem('hunty-prefs') || '{}')); } catch (_) {}
+try { const o = JSON.parse(localStorage.getItem('hunty-prefs') || '{}'); Object.assign(prefs, o); if (o.ns === false && !o.nsMode) prefs.nsMode = 'off'; } catch (_) {}
 let saveT = 0;
 export function setPref(k, v) {
   prefs[k] = v;

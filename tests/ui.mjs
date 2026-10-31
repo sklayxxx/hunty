@@ -141,7 +141,7 @@ if (only('voice')) {
 if (only('dm')) {
   step('dm call');
   await openChat(A, 'vasyan'); await openChat(B, 'anton');
-  await A.click('[data-act="call"]'); await sleep(1500);
+  await A.click('.js-hbtns [data-act="call"]'); await sleep(1500);
   await shot(B, 'e1-ring-B'); await shot(A, 'e1-ring-A');
   await B.locator('.toast button', { hasText: 'Ответить' }).first().click().catch(e => console.log('answer', e.message));
   await sleep(4000);

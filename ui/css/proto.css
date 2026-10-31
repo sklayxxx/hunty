@@ -1202,7 +1202,7 @@ html.resizing canvas{pointer-events:none}
 /* звонок в личке: демка и голос справа */
 .app.dmcall:not(.dmpeer) .demo .screen,.app.dmcall:not(.dmpeer) .demo .pf{display:none}
 .app.dmcall:not(.dmpeer):not(.dmme) .demo .ph .live,.app.dmcall:not(.dmpeer) .demo .dtag{display:none}
-.app.dmcall .js-btns,.app.dmcall .demo .note{display:none}
+.app.dmcall .demo .note,.app.dmcall .vpop .key[data-act="roll"],.app.dmcall .vpop .key[data-act="call"]{display:none}
 .dmd{flex:1;min-height:0;display:flex;flex-direction:column;margin:12px;border-radius:14px;border:1px dashed rgba(255,255,255,.12);overflow:hidden;
   background:radial-gradient(120% 90% at 50% 0%,rgba(126,226,184,.05),transparent 60%),#07080b}
 .app.dmcall.dmme .dmd{border-style:solid;border-color:rgba(255,255,255,.08)}

@@ -1,6 +1,7 @@
 // Точка входа: связь с ядром, загрузочный экран, регистрация, первый рендер, мелкие индикаторы,
 // сторож тормозов и ошибок (→ журнал и лог ядра), пасхалки
 import { $, $$, R, esc, ic, prefs, setPref, bus, reduce, sleep, short, plural } from './core.js';
+import './look.js';
 import './menu.js';
 import * as API from './api.js';
 import { S, load, wire, myId, myNick, nickOf } from './state.js';
@@ -8,10 +9,14 @@ import { app, tmsg, tone, TONES, toast, closeToast, openW, closeW, fit, glitch, 
 import { renderLists, renderWs, header, openChat, showEmpty, setTab, sorted } from './chat.js';
 import { refreshCode, getMyCode } from './friends.js';
 import './groups.js';
-import { layout, V } from './voice.js';
+import { layout, V, checkWaiting } from './voice.js';
 import './demo.js';
 import { initLayout } from './layout.js';
 import { renderMe, syncPrefs, checkUpdate } from './settings.js';
+import { renderOnline, renderPanel } from './me.js';
+import './board.js';
+import './micfix.js';
+import './system.js';
 import { onboard } from './onboard.js';
 import { steveAPI } from './afk.js';
 import { egg, eggsText } from './eggs.js';
@@ -80,22 +85,11 @@ function render() {
   renderMe(); renderLists(); renderWs(); setTab('chats');
   const last = prefs.lastChat && S.rooms.has(prefs.lastChat) ? prefs.lastChat : (sorted()[0] || {}).id;
   if (last) openChat(last); else showEmpty();
-  layout(); ping(); title(); refreshCode().catch(() => {});
+  layout(); renderOnline(); renderPanel(); title(); refreshCode().catch(() => {});
+  checkWaiting(); // друг ждёт в звонке, пока меня не было
 }
 
-/* ---------- мелочи в шапке ---------- */
-function ping() {
-  const el = $('.js-ping'), d = $('.js-p2pd'), box = $('.js-p2p');
-  const rt = [...S.online.entries()].filter(([p]) => S.friends.has(p)).map(([, o]) => o.rtt).filter(x => x != null);
-  let cls = 'on';
-  if (!S.link) { el.textContent = 'нет ядра'; cls = 'dnd'; }
-  else if (!rt.length) { el.textContent = S.online.size ? 'в сети' : 'один'; cls = S.online.size ? 'on' : 'away'; }
-  else { const m = Math.round(rt.reduce((a, b) => a + b, 0) / rt.length); el.textContent = m + 'ms'; cls = m < 150 ? 'on' : 'away'; }
-  d.className = 'pd js-p2pd ' + cls;
-  const n = S.online.size; box.title = `Серверов нет: всё напрямую · в сети ${n} ${plural(n, 'друг', 'друга', 'друзей')}`;
-}
-['presence', 'net', 'friend', 'friend_removed'].forEach(e => bus.on(e, ping));
-setInterval(ping, 5000);
+/* ---------- мелочи в шапке: счётчик «в сети» — в me.js ---------- */
 function title() {
   let n = 0; for (const r of S.rooms.values()) if (!r.muted) n += r.unread || 0;
   document.title = n ? `(${n}) Hunty` : 'Hunty';
@@ -142,7 +136,7 @@ try {
 /* ---------- связь с ядром ---------- */
 let lost = null, lostT = 0;
 bus.on('link', on => {
-  S.link = on; ping();
+  S.link = on;
   if (!on && !S.quitting) {
     clearTimeout(lostT);
     lostT = setTimeout(() => {
@@ -155,7 +149,7 @@ bus.on('link', on => {
 });
 bus.on('relink', () => { clearTimeout(lostT); if (lost) { lost.remove(); lost = null; } location.reload(); });
 bus.on('need-restart', () => toast({ icon: 'rotate-ccw', title: 'Перезапусти ядро', sub: 'в браузерном режиме перезапуск делает hunty-node — запусти его заново', dur: 9000 }));
-bus.on('quitting', () => { S.quitting = true; const b = document.createElement('div'); b.className = 'boot'; b.innerHTML = `<div class="brand">${($('.js-logo svg') || {}).outerHTML || ''}Hunty</div><pre>${OK}история сохранена\n${OK}Hunty выключен — друзья видят тебя не в сети\n<span class="dm">можно закрыть вкладку · запустишь Hunty снова — эта страница оживёт сама</span></pre>`; document.body.appendChild(b); });
+bus.on('quitting', why => { S.quitting = true; const b = document.createElement('div'); b.className = 'boot'; b.innerHTML = `<div class="brand">${($('.js-logo svg') || {}).outerHTML || ''}Hunty</div><pre>${why === 'update' ? `${OK}история сохранена\n${OK}ставлю обновление — Hunty запустится сам через пару секунд` : `${OK}история сохранена\n${OK}Hunty выключен — друзья видят тебя не в сети\n<span class="dm">можно закрыть вкладку · запустишь Hunty снова — эта страница оживёт сама</span>`}</pre>`; document.body.appendChild(b); });
 // браузерный режим: разрешение на системные уведомления — по первому клику после входа (браузеры требуют жест)
 if (!API.inTauri && 'Notification' in window && Notification.permission === 'default') {
   const ask = () => { if (!S.me || !S.me.onboarded) return; removeEventListener('pointerdown', ask, true); try { Notification.requestPermission().catch(() => {}); } catch (_) {} };

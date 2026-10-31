@@ -1,5 +1,5 @@
 // Общий UI: всплывашки и журнал, звуки, тосты, окна, контролы, масштаб, уведомления
-import { $, $$, R, esc, ic, hm, pad, MON, reduce, mobile, prefs, setPref, bus, clamp } from './core.js';
+import { $, $$, R, esc, ic, hm, pad, MON, reduce, mobile, prefs, setPref, bus, clamp, PDEF } from './core.js';
 import { attention, focused, inTauri } from './api.js';
 
 export const app = $('.js-app');
@@ -107,21 +107,40 @@ export const fail = e => { tmsg('err', String((e && e.message) || e)); tone(TONE
 const wback = $('.js-wback'); let openWin = null, lastFocus = null;
 export const OPEN = {}, CLOSE = {};
 export const winOpen = () => openWin;
+let ghostW = null, ghostT = 0;
+/** окно уезжает мягко, а не пропадает (80–170 мс), потом display:none */
+function ghost(w) {
+  if (ghostW && ghostW !== w) { ghostW.classList.remove('on', 'out'); }
+  clearTimeout(ghostT); ghostW = w;
+  if (!w) return;
+  if (reduce || R.classList.contains('lite')) { w.classList.remove('on'); ghostW = null; return; }
+  w.classList.add('out'); ghostT = setTimeout(() => { w.classList.remove('on', 'out'); ghostW = null; }, 170);
+}
 export function openW(name, opt = {}) {
   const w = $(`.win[data-win="${name}"]`, wback); if (!w) return;
+  if (ghostW) { clearTimeout(ghostT); ghostW.classList.remove('on', 'out'); ghostW = null; }
   if (openWin && openWin !== name) { const ow = $(`.win[data-win="${openWin}"]`, wback); ow && ow.classList.remove('on'); CLOSE[openWin] && CLOSE[openWin](); }
   if (!openWin) lastFocus = document.activeElement;
   openWin = name; bus.emit('win', name);
   if (OPEN[name]) OPEN[name](w, opt);
   w.classList.add('on'); wback.classList.add('on'); w.scrollTop = 0;
+  segScan(w);
   const f = (!mobile() && $('[data-autofocus]', w)) || $('.js-close', w);
   setTimeout(() => f && f.focus({ preventScroll: true }), 40);
+  if (opt.focus) setTimeout(() => flash($(opt.focus, w)), 140);
+}
+/** подсветить строку настроек (переход «Эффекты голоса» → нужное место) */
+export function flash(el) {
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1700);
 }
 export function closeW(force) {
   if (!openWin) return;
   const w = $(`.win[data-win="${openWin}"]`, wback);
   if (!force && w && w.dataset.lock) return;
-  w && w.classList.remove('on'); wback.classList.remove('on');
+  ghost(w); wback.classList.remove('on');
   const n = openWin; openWin = null; CLOSE[n] && CLOSE[n]();
   if (lastFocus && document.contains(lastFocus) && lastFocus.focus) lastFocus.focus({ preventScroll: true });
 }
@@ -135,10 +154,29 @@ document.addEventListener('click', e => {
 /* общие контролы: сегменты и палитры */
 document.addEventListener('click', e => {
   const t = e.target; if (!(t instanceof Element)) return;
-  const b = t.closest('.seg button'); if (b && !b.disabled) $$('button', b.parentElement).forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  const b = t.closest('.seg button'); if (b && !b.disabled) { $$('button', b.parentElement).forEach(x => x.setAttribute('aria-pressed', String(x === b))); segPill(b.parentElement); }
   const s = t.closest('.swatches button'); if (s) $$('button', s.parentElement).forEach(x => x.setAttribute('aria-pressed', String(x === s)));
 }, true);
-export function segSet(seg, v) { if (!seg) return; $$('button', seg).forEach(x => x.setAttribute('aria-pressed', String(String(x.dataset.v ?? x.dataset.g ?? x.dataset.c ?? '') === String(v)))); }
+export function segSet(seg, v) { if (!seg) return; $$('button', seg).forEach(x => x.setAttribute('aria-pressed', String(String(x.dataset.v ?? x.dataset.g ?? x.dataset.c ?? '') === String(v)))); segPill(seg); }
+/** «капля» сегмента переезжает к выбранной кнопке; пока сегмент не виден — без анимации */
+export function segPill(seg, instant) {
+  if (!seg || !seg.classList || !seg.classList.contains('seg')) return;
+  const b = $('button[aria-pressed="true"]', seg);
+  if (!b || !b.offsetWidth) { seg.classList.remove('has'); return; }
+  seg.classList.add('slide');
+  const jump = instant || !seg.classList.contains('has');
+  if (jump) seg.classList.add('ready');
+  seg.style.setProperty('--sx', b.offsetLeft + 'px'); seg.style.setProperty('--sy', b.offsetTop + 'px');
+  seg.style.setProperty('--sw', b.offsetWidth + 'px'); seg.style.setProperty('--sh', b.offsetHeight + 'px');
+  seg.classList.add('has');
+  if (jump) requestAnimationFrame(() => requestAnimationFrame(() => seg.classList.remove('ready')));
+}
+const segRO = typeof ResizeObserver === 'function' ? new ResizeObserver(es => es.forEach(e => segPill(e.target, true))) : null;
+const segSeen = new WeakSet();
+export function segScan(root = document) {
+  $$('.seg', root).forEach(s => { if (s.closest('.epk')) return; if (segRO && !segSeen.has(s)) { segSeen.add(s); segRO.observe(s); } segPill(s, true); });
+}
+setTimeout(() => segScan(), 0);
 export const segGet = seg => { const b = seg && $('button[aria-pressed="true"]', seg); return b ? (b.dataset.v ?? b.dataset.c ?? '') : ''; };
 export function rgv(r) {
   const v = +r.value, mn = +r.min || 0, mx = +r.max || 100;
@@ -146,6 +184,30 @@ export function rgv(r) {
   const o = r.parentElement.querySelector('.rgv'); if (o) o.textContent = v + (r.dataset.unit ?? '%');
 }
 document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('rg')) rgv(e.target); });
+// ползунки: «тянется» (подсветка значения), двойной клик — вернуть значение по умолчанию
+let rgDrag = null;
+const rgEnd = () => { if (rgDrag) { rgDrag.classList.remove('drag'); rgDrag = null; } };
+document.addEventListener('pointerdown', e => {
+  const r = e.target.closest && e.target.closest('.rg'); if (!r || !r.parentElement) return;
+  rgDrag = r.parentElement; rgDrag.classList.add('drag');
+}, true);
+addEventListener('pointerup', rgEnd, true); addEventListener('pointercancel', rgEnd, true); addEventListener('blur', rgEnd);
+document.addEventListener('dblclick', e => {
+  const r = e.target.closest && e.target.closest('.rg[data-pref]'); if (!r) return;
+  const d = PDEF[r.dataset.pref]; if (typeof d !== 'number' || +r.value === d) return;
+  r.value = d; rgv(r);
+  r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true }));
+  const o = r.parentElement.querySelector('.rgv'); if (o) { o.classList.remove('reset'); void o.offsetWidth; o.classList.add('reset'); }
+});
+setTimeout(() => $$('.rg[data-pref]').forEach(r => { if (!r.title) r.title = 'Двойной клик — как было по умолчанию'; }), 0);
+// клик по строке настройки с одним переключателем — щёлкает переключатель (как в Discord)
+document.addEventListener('click', e => {
+  const row = e.target.closest && e.target.closest('.row'); if (!row) return;
+  if (e.target.closest('input,button,select,textarea,a,label,.rgw,.seg,[contenteditable]')) return;
+  const tgs = $$('input.tg', row); if (tgs.length !== 1) return;
+  const t = tgs[0]; if (t.disabled || row.querySelector('select,input[type=range],input[type=text],.seg')) return;
+  t.checked = !t.checked; t.dispatchEvent(new Event('change', { bubbles: true })); t.dispatchEvent(new Event('input', { bubbles: true }));
+});
 export function copy(b) {
   const v = b.dataset.copy || ''; if (!v) return;
   if (!b.dataset.label) b.dataset.label = b.innerHTML; const old = b.dataset.label;

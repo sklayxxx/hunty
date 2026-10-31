@@ -414,6 +414,7 @@ fn ctype(p: &Path) -> &'static str {
         "wav" => "audio/wav",
         "mp3" => "audio/mpeg",
         "ogg" => "audio/ogg",
+        "wasm" => "application/wasm",
         "ico" => "image/x-icon",
         "txt" | "md" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",

@@ -1,5 +1,6 @@
 // Свои контекстные меню вместо браузерных, окно «точно?» и защита от браузерных хоткеев/жестов
 import { $, $$, esc, ic, clamp, bus } from './core.js';
+import { emoImg } from './emoji.js';
 
 /* ---------- контекстное меню ---------- */
 // пункт: {label, icon, fn, kbd, danger, disabled, check, keep} · '-' — черта · {head, sub, img} — шапка
@@ -14,11 +15,11 @@ export const menuOpen = () => !!root;
 function itemHTML(it, i) {
   if (it === '-') return '<div class="msep" role="separator"></div>';
   if (it.head) return `<div class="mhead">${it.img ? `<img class="ava" alt="" src="${esc(it.img)}">` : ''}<span><b>${esc(it.head)}</b>${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</span></div>`;
-  if (it.emojis) return `<div class="memo" role="group" aria-label="Реакции">${it.emojis.map(e => `<button type="button" class="${it.active && it.active.has(e) ? 'on' : ''}" data-i="${i}" data-e="${esc(e)}" title="${esc(e)}">${esc(e)}</button>`).join('')}</div>`;
+  if (it.emojis) return `<div class="memo" role="group" aria-label="Реакции">${it.emojis.map(e => `<button type="button" class="${it.active && it.active.has(e) ? 'on' : ''}" data-i="${i}" data-e="${esc(e)}" aria-label="${esc(e)}">${emoImg(e)}</button>`).join('')}${it.more ? `<button type="button" class="mmore" data-i="${i}" data-more="1" title="Все эмодзи" aria-label="Все эмодзи">${ic('smile-plus')}</button>` : ''}</div>`;
   if (it.range) { const r = it.range; return `<div class="mi mrng" data-i="${i}"><span class="ml">${it.icon ? ic(it.icon) : ''}${esc(it.label || '')}</span><input type="range" class="rg" min="${r.min ?? 0}" max="${r.max ?? 100}" step="${r.step ?? 1}" value="${r.value ?? 0}" aria-label="${esc(it.label || '')}"><output>${esc((r.fmt || (v => v + '%'))(r.value ?? 0))}</output></div>`; }
   const ck = it.check !== undefined;
-  const cls = 'mi' + (it.danger ? ' danger' : '') + (it.items ? ' hassub' : '') + (ck ? ' mchk' : '');
-  return `<button type="button" class="${cls}" role="${ck ? 'menuitemcheckbox' : 'menuitem'}" data-i="${i}"${it.disabled ? ' disabled aria-disabled="true"' : ''}${ck ? ` aria-checked="${!!it.check}"` : ''}>${ck ? `<span class="mck">${it.check ? ic('check') : ''}</span>` : it.icon ? ic(it.icon) : '<span class="mic0"></span>'}<span class="ml">${esc(it.label)}</span>${it.kbd ? `<kbd>${esc(it.kbd)}</kbd>` : ''}${it.items ? ic('chevron-right') : ''}</button>`;
+  const cls = 'mi' + (it.danger ? ' danger' : '') + (it.items ? ' hassub' : '') + (ck ? ' mchk' : '') + (it.cur ? ' cur' : '');
+  return `<button type="button" class="${cls}" role="${ck ? 'menuitemcheckbox' : 'menuitem'}" data-i="${i}"${it.disabled ? ' disabled aria-disabled="true"' : ''}${ck ? ` aria-checked="${!!it.check}"` : ''}>${ck ? `<span class="mck">${it.check ? ic('check') : ''}</span>` : it.dot ? `<span class="mdot"><i class="pd ${esc(it.dot)}"></i></span>` : it.img ? `<img class="ava mimg" alt="" src="${esc(it.img)}">` : it.tile ? (it.tile.pic ? `<span class="tile mimg pic"><img alt="" src="${esc(it.tile.pic)}"></span>` : `<span class="tile mimg" style="--tc:${esc(it.tile.color || '#7ee2b8')}">${esc(((it.tile.name || '?').trim()[0] || '?').toUpperCase())}</span>`) : it.icon ? ic(it.icon) : '<span class="mic0"></span>'}<span class="ml">${esc(it.label)}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}</span>${it.kbd ? `<kbd>${esc(it.kbd)}</kbd>` : ''}${it.cur ? `<span class="mcur">${ic('check')}</span>` : ''}${it.items ? ic('chevron-right') : ''}</button>`;
 }
 function build(items, level) {
   const m = document.createElement('div');
@@ -82,7 +83,7 @@ function wire(m) {
   });
   m.addEventListener('click', e => {
     const eb = e.target.closest('.memo button');
-    if (eb) { const it = m._items[+eb.dataset.i]; closeMenu(); it.on && it.on(eb.dataset.e); return; }
+    if (eb) { const it = m._items[+eb.dataset.i]; closeMenu(); if (eb.dataset.more) it.more && it.more(); else it.on && it.on(eb.dataset.e); return; }
     const b = e.target.closest('button.mi'); if (!b || b.disabled) return;
     const it = m._items[+b.dataset.i]; if (!it) return;
     if (it.items) { const s = openSub(m, b); const f = s && $('.mi:not([disabled])', s); f && f.focus(); return; }
@@ -135,9 +136,21 @@ function editItems(el) {
     { icon: 'type', label: 'Выделить всё', kbd: 'Ctrl+A', disabled: !(el.value || el.textContent), fn: () => { el.focus(); if (el.select) el.select(); else document.execCommand('selectAll'); } },
   ];
 }
-const selText = () => { try { return String(getSelection() || ''); } catch (_) { return ''; } };
+/** выделенный текст; картинки эмодзи → обратно в символы */
+function selStr(s) {
+  try {
+    if (!s || s.isCollapsed || !s.rangeCount) return '';
+    const fr = s.getRangeAt(0).cloneContents();
+    if (!fr.querySelector || !fr.querySelector('img.emj,img.emjb')) return String(s);
+    const d = document.createElement('div'); d.append(fr);
+    d.querySelectorAll('img.emj,img.emjb').forEach(i => i.replaceWith(i.alt || ''));
+    d.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+    return d.textContent;
+  } catch (_) { return ''; }
+}
+const selText = () => selStr(getSelection());
 /** выделенный текст, если выделение внутри el */
-export const selectionIn = el => { const s = getSelection(); return s && !s.isCollapsed && el.contains(s.anchorNode) ? String(s) : ''; };
+export const selectionIn = el => { const s = getSelection(); return s && !s.isCollapsed && el.contains(s.anchorNode) ? selStr(s) : ''; };
 document.addEventListener('contextmenu', e => {
   e.preventDefault(); // браузерное меню не показываем никогда
   const t = e.target instanceof Element ? e.target : e.target && e.target.parentElement;

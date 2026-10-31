@@ -21,7 +21,25 @@ export const MOBS={
   sheep:{n:'Овца',p:{W:'#efefef',w:'#d9d9d9',F:'#d8b89c',f:'#c7a586',k:'#1b1b1b',v:'#ffffff',n:'#e7bfa8',N:'#b07c6a'},g:['WwWWWwWW','WFFFFFFw','WFfFFfFW','FkvFFvkF','FFFFFFFF','FFnNNnFF','FFFnnFFF','wFFFFFFW']},
   bee:{n:'Пчела',p:{Y:'#f1c232',y:'#e0ad1f',K:'#2b2418',B:'#2c3f66',w:'#ffffff'},g:['YYyYYYyY','KKKKKKKK','YYYYYYYY','BwYYYYwB','BBYYYYBB','YYYYYYYY','KKKKKKKK','YyYYyYYY']},
   piglin:{n:'Пиглин',p:{S:'#e9a59a',s:'#d88d83',t:'#f0b7ac',n:'#f5c6bc',N:'#9b5b52',w:'#ffffff',k:'#1d1d1d',T:'#f2ede0'},g:['sSSsSSsS','SStSSSSS','SwkSSkwS','SSSSSSSS','SSnnnnSS','SSNnnNSS','STsSSsTS','SSSSSSSS']},
-  ghast:{n:'Гаст',p:{W:'#f0f0f0',w:'#dcdcdc',k:'#2a2a2a',R:'#b23a3a'},g:['WWWwWWWW','WwWWWWwW','WkkWWkkW','WWWWWWWW','WWWWwWWW','WWkkkkWW','WWkRRkWW','WWWWWWWW']}
+  ghast:{n:'Гаст',p:{W:'#f0f0f0',w:'#dcdcdc',k:'#2a2a2a',R:'#b23a3a'},g:['WWWwWWWW','WwWWWWwW','WkkWWkkW','WWWWWWWW','WWWWwWWW','WWkkkkWW','WWkRRkWW','WWWWWWWW']},
+  chicken:{n:'Курица',p:{W:'#f4f4f4',w:'#e2e2e2',k:'#1b1b1b',Y:'#f2b21b',y:'#d9930f',R:'#d6312b'},g:['WWwWWWWw','WWWWWwWW','wWWWWWWW','WkWWWWkW','WWYYYYWW','WWyyyyWW','WWWRRWWw','wWWRRWWW']},
+  panda:{n:'Панда',p:{W:'#f2f2f2',w:'#dcdcdc',K:'#1e1e1e',e:'#ffffff',N:'#2a2a2a'},g:['KKWWWWKK','KWWwWWWK','WWWWWWWW','WKKWWKKW','WKeWWeKW','WWWNNWWW','WwWWWWwW','wWWWWWWw']},
+  frog:{n:'Лягушка',p:{G:'#6b9e3a',g:'#5a8a2e',L:'#9fc25a',D:'#2d4d18',w:'#f5f5f5',k:'#111111'},g:['gGGggGGg','GwkGGkwG','GGGGGGGG','GLGGGGLG','GGGGGGGG','GDDDDDDG','GGGGGGGG','gGLLLLGg']},
+  wolf:{n:'Волк',p:{W:'#d8d8d8',w:'#c4c4c4',g:'#a9a9a9',L:'#ece8e0',K:'#1a1a1a',k:'#2a2a2a'},g:['WwWWWWwW','WWWWWWWW','WgWWWWgW','WkWWWWkW','WWgLLgWW','WWLKKLWW','WWLLLLWW','wWLLLLWw']},
+  cat:{n:'Кот',p:{O:'#e8a14b',o:'#c97f2c',g:'#5ac94a',k:'#151515',W:'#f5efe6',P:'#f19ca8'},g:['OoOOOOoO','OOoooOOO','OOOOOOOO','OgkOOkgO','OOOOOOOO','OOWPPWOO','OOWWWWOO','oOOOOOOo']},
+  mooshroom:{n:'Грибная корова',p:{R:'#a8231f',r:'#8c1a17',W:'#e6e6e6',k:'#111111',n:'#c9b8a8',N:'#6a5342'},g:['RrRRRRrR','RWWWRRRR','WWWWWRrR','kWWWRRRk','RWWWRrRR','RnnnnnnR','RnNnnNnR','RnnnnnnR']},
+  witch:{n:'Ведьма',p:{P:'#3b2a4d',p:'#2d1f3b',G:'#7cc142',S:'#b48a70',s:'#9c7660',w:'#f2f2f2',g:'#5a2a7a',N:'#8c5f48',m:'#3d7d2f'},g:['PPPPPPPP','pPPGGPPp','SSSSSSSS','SwgSSgwS','SSSNNSSS','SSSNmSSS','SSsNNsSS','SSSSSSSS']},
+  pillager:{n:'Разбойник',p:{H:'#3c3c3c',h:'#2e2e2e',S:'#9da3a6',s:'#8b9194',B:'#2a2a2a',w:'#e8e8e8',k:'#1a4a3a',N:'#7f8588'},g:['HhHHHHhH','HHHHHHHH','SSSSSSSS','SBBBBBBS','SwkSSkwS','SSSNNSSS','SsSNNSsS','SSSSSSSS']},
+  pumpkin:{n:'Тыква',p:{O:'#e08a1e',o:'#c2700f',Y:'#ffd94a',y:'#ffb52e'},g:['OoOOOOoO','OOOoOOOO','OYYOOYYO','OYyOOyYO','OOOOOOOO','OYOYYOYO','OyYYYYyO','oOOOOOOo']},
+  parrot:{n:'Попугай',p:{R:'#e23b2e',r:'#c42c21',w:'#f2f2f2',k:'#111111',Y:'#f5c542',B:'#2e7bd6',b:'#2563b0'},g:['RrRRRRrR','RRRRRRRR','RwkRRkwR','RRRRRRRR','RRYYYYRR','RRRYYRRR','BBRRRRBB','bBBRRBBb']},
+  allay:{n:'Тихоня',p:{C:'#4fd6ff',c:'#a8f0ff',B:'#1b4b8a',W:'#ffffff'},g:['CCCCCCCC','CccccccC','CcBccBcC','CcBccBcC','CccccccC','CccWWccC','CCccccCC','cCCCCCCc']},
+  warden:{n:'Хранитель',p:{D:'#0f3a3f',d:'#0b2c30',C:'#2fe0d0',c:'#1fa89c'},g:['DdDDDDdD','CDDDDDDC','CDdDDdDC','DDDDDDDD','DcDDDDcD','DDDCCDDD','DdDccDdD','DDDdDDDD']},
+  strider:{n:'Лавомерка',p:{R:'#9c2f2f',r:'#7f2424',w:'#e8e0d0',k:'#1a1a1a',M:'#4a1212'},g:['RrRRRRrR','RRRRRRRR','RwkRRkwR','RRRRRRRR','RRMMMMRR','RrRRRRrR','RRRRRRRR','rRRrrRRr']},
+  shulker:{n:'Шалкер',p:{P:'#8b5c94',p:'#744a7d',Y:'#f2e7a6',y:'#e0d38a',k:'#2a2a2a'},g:['PPPPPPPP','PpPPPPpP','PPYYYYPP','PYkYYkYP','PYYyyYYP','PPYYYYPP','PpPPPPpP','PPPPPPPP']},
+  rabbit:{n:'Кролик',p:{B:'#a57b55',b:'#8e6646',k:'#151515',W:'#efe6da',P:'#e991a1'},g:['BbBBBBbB','BBBBBBBB','BkWBBWkB','BBBBBBBB','BBWPPWBB','BBWWWWBB','bBBWWBBb','BBBBBBBB']},
+  husk:{n:'Кадавр',p:{H:'#6b5a3a',h:'#7a6844',s:'#b8a77a',t:'#a89768',u:'#c7b78a',k:'#2a2112',m:'#7a6a44'},g:['HhHHhHHh','hHsHHtHs','ssutsust','skksskku','tsssusst','sutmmtsu','stsmmsts','tsustsus']},
+  magma:{n:'Магмовый куб',p:{K:'#3a1212',R:'#ff7a1a',r:'#c94a0e',Y:'#ffd23a'},g:['KRKKrKKR','RKKRKKrK','KYYKKYYK','KrKKKKRK','RKKRrKKR','KKrKKRKK','rKKKKKKR','KRKrKRKK']},
+  llama:{n:'Лама',p:{W:'#e8dcc2',w:'#d4c6a8',k:'#1a1a1a',B:'#f4eedf',N:'#6a5342'},g:['WwWWWWwW','WWWWWWWW','WkWWWWkW','WWWWWWWW','WWBBBBWW','WWBNNBWW','WWBBBBWW','wWWWWWWw']}
 };
 // Стив занят AFK-гэгом, гаст и пиглин — для пасхалок
 export const MOBKEYS=Object.keys(MOBS).filter(k=>!['ghast','steve','piglin'].includes(k));

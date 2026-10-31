@@ -3,32 +3,69 @@ import { $, $$, esc, ic, short, plural, bus } from './core.js';
 import { api } from './api.js';
 import { S, myId, nickOf, avaOf, isOnline, roomName } from './state.js';
 import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, segSet, segGet, winOpen } from './ui.js';
-import { openChat, renderLists, header, tileHTML, leaveGroup } from './chat.js';
+import { openChat, renderLists, header, tileHTML, leaveGroup, pdHTML, lineOf } from './chat.js';
+import { shrinkImage } from './card.js';
+import { bump } from './motion.js';
 import { onCtx, ask } from './menu.js';
 import { personItems } from './people.js';
 import qrcode from './vendor/qrcode.js';
 
-/* ---------- создать ---------- */
+/* ---------- создать: понятный выбор (галочка-кружок + чипы выбранных), своя картинка ---------- */
 const gw = $('.win[data-win="group"]');
-const gname = $('.js-gname', gw), gtile = $('.js-gtile', gw), gpick = $('.js-gpick', gw);
-const picked = new Set();
+const gname = $('.js-gname', gw), gtile = $('.js-gtile', gw), gpick = $('.js-gpick', gw), gq = $('.js-gq', gw);
+const picked = new Set(); let gpic = '';
 function gcolor() { return segGet($('.js-gcol', gw)) || '#7ee2b8'; }
-function gTile() { gtile.textContent = ((gname.value.trim() || '?')[0] || '?').toUpperCase(); gtile.style.setProperty('--tc', gcolor()); }
-function renderPick() {
-  const fr = [...S.friends.values()].filter(f => f.state === 'friend').sort((a, b) => (isOnline(b.peer) - isOnline(a.peer)));
-  gpick.innerHTML = fr.length ? fr.map(f => `<button type="button" class="pk" data-p="${esc(f.peer)}" aria-pressed="${picked.has(f.peer)}"><img class="ava" alt="" src="${avaOf(f.peer)}"><span>${esc(nickOf(f.peer))}</span>${ic('check')}</button>`).join('') : '<div class="empty">друзей пока нет — создай группу и пригласи по ссылке</div>';
-  $('.js-gcount', gw).textContent = '· выбрано ' + picked.size;
+function gTile() {
+  gtile.style.setProperty('--tc', gcolor());
+  gtile.classList.toggle('pic', !!gpic);
+  gtile.innerHTML = gpic ? `<img alt="" src="${esc(gpic)}" draggable="false">` : esc(((gname.value.trim() || '?')[0] || '?').toUpperCase());
 }
-gpick.addEventListener('click', e => { const b = e.target.closest('.pk'); if (!b) return; const p = b.dataset.p; picked.has(p) ? picked.delete(p) : picked.add(p); b.setAttribute('aria-pressed', String(picked.has(p))); $('.js-gcount', gw).textContent = '· выбрано ' + picked.size; });
+const friendsList = () => [...S.friends.values()].filter(f => f.state === 'friend').sort((a, b) => (isOnline(b.peer) - isOnline(a.peer)) || nickOf(a.peer).localeCompare(nickOf(b.peer)));
+function gCount() {
+  const n = picked.size, all = friendsList().length;
+  $('.js-gcount', gw).textContent = n ? `выбрано ${n} ${plural(n, 'друг', 'друга', 'друзей')}` : 'пока никого · можно позвать потом по ссылке';
+  $('.js-gall', gw).hidden = !all || n === all; $('.js-gnone', gw).hidden = !n;
+  $('.js-gchips', gw).innerHTML = [...picked].map(p => `<button type="button" class="gchip" data-un="${esc(p)}" title="Убрать"><img class="ava" alt="" src="${avaOf(p)}"><span>${esc(nickOf(p))}</span>${ic('x')}</button>`).join('');
+}
+function renderPick() {
+  const q = gq.value.trim().toLowerCase(), fr = friendsList();
+  const list = q ? fr.filter(f => nickOf(f.peer).toLowerCase().includes(q)) : fr;
+  gq.parentElement.hidden = fr.length < 6;
+  gpick.innerHTML = !fr.length ? '<div class="empty">друзей пока нет — создай группу и позови по ссылке</div>'
+    : !list.length ? '<div class="empty">никого с таким ником</div>'
+    : list.map(f => `<button type="button" class="pk" role="option" data-p="${esc(f.peer)}" aria-pressed="${picked.has(f.peer)}" aria-selected="${picked.has(f.peer)}"><span class="avw"><img class="ava" alt="" src="${avaOf(f.peer)}">${pdHTML(f.peer)}</span><span class="pkn"><b>${esc(nickOf(f.peer))}</b><small>${esc(lineOf(f.peer))}</small></span><span class="pkc">${ic('check')}</span></button>`).join('');
+  gCount();
+}
+function toggle(p, on) {
+  on = on ?? !picked.has(p); on ? picked.add(p) : picked.delete(p);
+  const b = gpick.querySelector(`.pk[data-p="${CSS.escape(p)}"]`);
+  if (b) { b.setAttribute('aria-pressed', String(on)); b.setAttribute('aria-selected', String(on)); if (on) bump(b.querySelector('.pkc'), 1.25); }
+  gCount();
+}
+gpick.addEventListener('click', e => { const b = e.target.closest('.pk'); if (b) toggle(b.dataset.p); });
+$('.js-gchips', gw).addEventListener('click', e => { const b = e.target.closest('[data-un]'); if (b) toggle(b.dataset.un, false); });
+$('.js-gall', gw).addEventListener('click', () => { friendsList().forEach(f => picked.add(f.peer)); renderPick(); });
+$('.js-gnone', gw).addEventListener('click', () => { picked.clear(); renderPick(); });
+gq.addEventListener('input', renderPick);
 gname.addEventListener('input', gTile);
 $('.js-gcol', gw).addEventListener('click', () => setTimeout(gTile, 0));
 gname.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('.js-gcreate', gw).click(); } });
-OPEN.group = (_, o) => { picked.clear(); if (o.with) picked.add(o.with); gname.value = ''; segSet($('.js-gcol', gw), ['#7ee2b8', '#9db7ff', '#ffb36b', '#ff94b8', '#63e6ff', '#ffd36b'][Math.floor(Math.random() * 6)]); gTile(); renderPick(); };
+/** картинка группы: квадрат 128×128, до ~90 КБ — уходит всем участникам */
+export function pickGroupPic(input, done) {
+  input.value = '';
+  input.onchange = async () => { const f = input.files && input.files[0]; if (!f) return; try { done(await shrinkImage(f, { w: 128, h: 128, max: 90 * 1024 })); } catch (e) { fail(e); } };
+  input.click();
+}
+$('.js-gpic', gw).addEventListener('click', () => {
+  if (gpic) { gpic = ''; gTile(); tmsg('ok', 'картинка убрана · будет буква'); return; }
+  pickGroupPic($('.js-gpicf', gw), u => { gpic = u; gTile(); bump(gtile); });
+});
+OPEN.group = (_, o) => { picked.clear(); gpic = ''; gq.value = ''; if (o.with) picked.add(o.with); gname.value = ''; segSet($('.js-gcol', gw), ['#7ee2b8', '#9db7ff', '#ffb36b', '#ff94b8', '#63e6ff', '#ffd36b', '#d6a8ff', '#ff9f8f'][Math.floor(Math.random() * 8)]); gTile(); renderPick(); };
 $('.js-gcreate', gw).addEventListener('click', async () => {
   const name = gname.value.trim();
-  if (!name) { gname.focus(); tmsg('warn', 'назови группу'); return; }
+  if (!name) { gname.focus(); gname.classList.remove('shake'); void gname.offsetWidth; gname.classList.add('shake'); tmsg('warn', 'назови группу'); return; }
   try {
-    const r = await api('room_create', { name, color: gcolor(), members: [...picked], voice: $('.js-gvoice', gw).checked, invite: segGet($('.js-ginv', gw)) || 'all' });
+    const r = await api('room_create', { name, color: gcolor(), members: [...picked], voice: true, invite: segGet($('.js-ginv', gw)) || 'all', ...(gpic ? { pic: gpic } : {}) });
     const room = r.room || r; S.rooms.set(room.id, room);
     closeW(true); renderLists(); openChat(room.id, { focus: true });
     tmsg('ok', `группа «${name}» создана · ты админ${picked.size ? ' · приглашения ушли ' + picked.size + ' ' + plural(picked.size, 'другу', 'друзьям', 'друзьям') : ''}`); tone(TONES.friend);
@@ -78,7 +115,8 @@ $('.js-gtabs', sw).addEventListener('click', e => { const b = e.target.closest('
 $$('.js-gtabs button', sw).forEach(b => b.dataset.v = b.dataset.g);
 function renderGset() {
   const r = S.rooms.get(gsRoom); if (!r) { closeW(true); return; }
-  const t = $('.js-gstile', sw); t.textContent = (r.name || '?')[0].toUpperCase(); t.style.setProperty('--tc', r.color || '#7ee2b8');
+  $('.js-gstile', sw).innerHTML = tileHTML(r); $('.js-gspic', sw).innerHTML = tileHTML(r);
+  $('.js-gspicup', sw).hidden = !r.admin; $('.js-gspicdel', sw).hidden = !r.admin || !r.pic;
   $('.js-gstitle', sw).textContent = r.name;
   $('.js-gssub', sw).textContent = r.admin ? 'настройки группы · ты админ' : 'настройки группы';
   const ms = (r.members || []).slice().sort((a, b) => (b.role === 'owner') - (a.role === 'owner') || (b.role === 'admin') - (a.role === 'admin') || (b.online - a.online));
@@ -101,6 +139,8 @@ async function upd(patch, msg) {
 }
 $('.js-gsname', sw).addEventListener('change', e => { const v = e.target.value.trim(); if (v) upd({ name: v }, 'группа переименована'); });
 $('.js-gscol', sw).addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (b && S.rooms.get(gsRoom).admin) upd({ color: b.dataset.c }); });
+$('.js-gspicup', sw).addEventListener('click', () => pickGroupPic($('.js-gpicf', gw), u => upd({ pic: u }, 'картинка группы обновлена · участники увидят сразу')));
+$('.js-gspicdel', sw).addEventListener('click', () => upd({ pic: '' }, 'картинка убрана'));
 $('.js-gsvoice', sw).addEventListener('change', e => upd({ voice: e.target.checked }, e.target.checked ? 'голосовой канал включён' : 'голосовой канал выключен'));
 $('.js-gsinv', sw).addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (b && !b.disabled) upd({ invite: b.dataset.v }); });
 $('.js-gsmute', sw).addEventListener('change', e => upd({ muted: e.target.checked }, e.target.checked ? 'группа без звука' : 'уведомления группы включены'));

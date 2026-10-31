@@ -61,7 +61,7 @@ try {
   await shot(A, '1-hover');
   // реакция с панельки
   await A.locator('.mact [data-qr="👍"]').click();
-  await B.waitForFunction(() => [...document.querySelectorAll('.log:not([hidden]) .rc')].some(r => r.textContent.includes('👍')));
+  await B.waitForFunction(() => [...document.querySelectorAll('.log:not([hidden]) .rc')].some(r => r.dataset.e === '👍' || r.textContent.includes('👍')));
   ok(true, 'реакция с панельки дошла до собеседника');
   // меню сообщения → ответить
   await msg(A, 'цитата').click({ button: 'right' }); await A.waitForSelector('.cmenu.on'); await sleep(200);
@@ -123,12 +123,10 @@ try {
   await A.click('.js-snav [data-tab="net"]'); await sleep(600);
   ok(await A.locator('.js-jlist .jl').count() >= 3, 'журнал: ' + await A.locator('.js-jlist .jl').count() + ' записей');
   await A.locator('.js-jlist').scrollIntoViewIfNeeded(); await shot(A, '9-journal');
-  await A.click('.js-snav [data-tab="audio"]'); await sleep(300);
-  await A.click('.js-mictest'); await sleep(1800);
-  const w = await A.evaluate(() => parseFloat(document.querySelector('.js-mtfill').style.width) || 0);
-  ok(await A.locator('.js-mtest.on').count() === 1, 'проверка мика идёт · полоска ' + w.toFixed(0) + '%');
+  await A.click('.js-snav [data-tab="audio"]'); await sleep(2200);
+  const w = await A.evaluate(() => parseFloat(document.querySelector('.js-sensbar').style.getPropertyValue('--lv')) || 0);
+  ok(await A.locator('.js-mtest.on').count() === 1, 'проверка мика запускается сама · уровень ' + w.toFixed(0) + '%');
   await shot(A, '10-mictest');
-  await A.click('.js-mictest'); await sleep(200);
   await A.keyboard.press('Escape'); await sleep(300);
   // всплывашка снизу
   await A.evaluate(async () => { const { tmsg } = await import('/js/ui.js'); tmsg('ok', 'пример всплывашки — всё остальное в журнале (Настройки → Сеть)'); });

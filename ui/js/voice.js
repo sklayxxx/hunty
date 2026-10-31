@@ -3,18 +3,21 @@ import { $, $$, esc, ic, dur, pick, clamp, mobile, reduce, prefs, setPref, bus, 
 import { api } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, roomName, dmPeer, voiceIn, voiceCount, isOnline } from './state.js';
 import { app, tmsg, tone, TONES, toast, closeToast, fail, notify, speak, actx, openW, closeW, fit, glitch, OPEN, segSet, segGet } from './ui.js';
-import { getMic, makeGate, gateSet } from './audio.js';
+import { getMic, micChain } from './audio.js';
 import { onCtx } from './menu.js';
 import { personItems, mutedFor, volOf } from './people.js';
 
 export const MAXV = 6;
 export const V = {
-  room: '', since: 0, mic: true, deaf: false, cam: false, share: false,
-  raw: null, micS: null, track: null, proc: null, gain: null, an: null, gate: null, gateOpen: true, level: 0,
-  camS: null, scrS: null, peers: new Map(), resets: new Map(), mini: false, manualMini: false, ptt: false,
+  room: '', since: 0, mic: !prefs.selfMute, deaf: !!prefs.selfDeaf, cam: false, share: false,
+  raw: null, micS: null, track: null, proc: null, gain: null, an: null, gate: null, chain: null, gateOpen: true, level: 0,
+  camS: null, scrS: null, peers: new Map(), resets: new Map(), mini: false, manualMini: false, ptt: false, gkeys: false, gateMsg: null,
 };
 const rid = () => Math.random().toString(36).slice(2, 10);
-const micOn = () => V.mic && !V.deaf && (!+prefs.ptt || V.ptt);
+// звонки в личке: ringOut — звоню я, ringIn — звонят мне, waitDm — друг не в сети, жду его в звонке
+let ringOut = null, ringIn = new Map(), waitDm = '';
+const declined = new Map(); // room → ts: «Сбросить» нажал я — не напоминаю следом
+export const micOn = () => V.mic && !V.deaf && (!+prefs.ptt || V.ptt);
 const myState = () => ({ mic: V.mic && !V.deaf, deaf: V.deaf, cam: V.cam, share: V.share, since: 0 });
 export const inVoice = () => !!V.room;
 const pushState = () => { if (V.room) api('voice_state', { state: myState() }).catch(() => {}); };
@@ -26,20 +29,15 @@ async function micStart() {
   catch (e) { tmsg('warn', 'микрофон недоступен — тебя не слышно, но ты всех слышишь'); V.mic = false; }
   V.raw = raw;
   const ctx = actx();
-  if (raw && ctx) {
-    const src = ctx.createMediaStreamSource(raw);
-    V.gain = ctx.createGain(); V.gain.gain.value = (prefs.micVol ?? 100) / 100;
-    const dest = ctx.createMediaStreamDestination();
-    V.an = ctx.createAnalyser(); V.an.fftSize = 512; V.an.smoothingTimeConstant = .5;
-    // порог голоса: тише порога — в звонок идёт тишина (фон и клава между фразами)
-    const gate = ctx.state === 'running' ? await makeGate(ctx, m => { V.gateOpen = !!m[0]; }) : null;
-    if (V.raw !== raw) { if (gate) gate.disconnect(); return; } // пока ждали — вышли из голоса
-    V.gate = gate; V.gateOpen = true;
-    src.connect(V.gain); V.gain.connect(V.an);
-    if (gate) { V.gain.connect(gate); gate.connect(dest); } else V.gain.connect(dest);
-    V.micS = dest.stream; V.proc = dest.stream.getAudioTracks()[0];
+  let ch = null;
+  // шумодав → громкость → порог голоса → эффект → саундборд (audio.js); тише порога — в звонок идёт тишина
+  if (raw && ctx) { try { ch = await micChain(ctx, raw, { onGate: m => { V.gateOpen = !!m[0]; V.gateMsg = m; } }); } catch (e) { console.warn('mic', e); } }
+  if (V.raw !== raw) { if (ch) ch.stop(true); return; } // пока собирали — вышли из голоса
+  if (ch) {
+    V.chain = ch; V.gain = ch.gain; V.an = ch.an; V.gate = ch.gate; V.gateOpen = true;
+    V.micS = ch.stream; V.proc = ch.track;
     // пока AudioContext не запущен (Firefox до первого клика, нет аудиовыхода), из графа идёт тишина —
-    // шлём мик напрямую (без ползунка громкости), а как контекст оживёт — подменяем на обработанный
+    // шлём мик напрямую, а как контекст оживёт — подменяем на обработанный
     if (ctx.state === 'running') V.track = V.proc;
     else {
       V.track = raw.getAudioTracks()[0];
@@ -58,9 +56,9 @@ async function micStart() {
   if (V.track) V.track.enabled = micOn();
 }
 function micStop() {
+  if (V.chain) V.chain.stop(true);
   if (V.raw) V.raw.getTracks().forEach(t => t.stop()); [V.track, V.proc].forEach(t => { if (t) t.stop(); });
-  if (V.gate) { try { V.gate.port.onmessage = null; V.gate.disconnect(); } catch (_) {} }
-  V.raw = V.track = V.proc = V.micS = V.gain = V.an = V.gate = null; V.gateOpen = true;
+  V.raw = V.track = V.proc = V.micS = V.gain = V.an = V.gate = V.chain = null; V.gateOpen = true;
 }
 async function micRestart() {
   if (!V.room) return;
@@ -220,7 +218,7 @@ export async function join(room, o = {}) {
   const n = Object.keys(voiceIn(room)).filter(p => p !== myId()).length;
   if (n >= MAXV) { tmsg('warn', `в голосе уже ${MAXV} — больше прямых соединений mesh не потянет`); return; }
   if (V.room) await leave({ silent: true });
-  V.room = room; V.since = Date.now(); V.mini = false; V.manualMini = false; V.mic = o.mic ?? true; V.deaf = false;
+  V.room = room; V.since = Date.now(); V.mini = false; V.manualMini = false; V.mic = o.mic ?? !prefs.selfMute; V.deaf = !!prefs.selfDeaf;
   actx();
   await micStart();
   try {
@@ -235,6 +233,7 @@ export async function join(room, o = {}) {
 export async function leave(o = {}) {
   if (!V.room) return;
   const room = V.room, secs = (Date.now() - V.since) / 1000;
+  if (ringOut && ringOut.room === room) { hangOut('left'); o = { ...o, logCall: false }; } // ушёл, пока ещё звонили — гасим звонок у друга
   if (V.share) stopShare(true);
   if (V.cam) camStop(true);
   for (const p of [...V.peers.keys()]) closePeer(p);
@@ -317,11 +316,21 @@ export function renderRows() {
     const st = p === me ? myState() : vs[p] || {}; const P = V.peers.get(p);
     const ping = p === me ? '' : P && P.rtt != null ? P.rtt + 'ms' : S.online.get(p) && S.online.get(p).rtt != null ? S.online.get(p).rtt + 'ms' : '';
     return `<button class="vr" data-u="${esc(p)}" title="${p === me ? 'это ты · правый клик — мик и звук' : `клик — пнуть · правый клик — громкость${volOf(p) !== 100 ? ' (сейчас ' + volOf(p) + '%)' : ''} и меню`}"><img class="ava" alt="" src="${avaOf(p)}"><b style="color:${colorOf(p)}">${esc(nickOf(p))}</b><span class="vu">${VU}</span><span class="ping">${ping}${P && P.path === 'relay' ? ' · relay' : ''}</span>${rowTag(p, st)}</button>`;
-  }).join('');
+  }).join('') + waitRow(vs);
   $('.js-mav').innerHTML = ids.map(p => `<img alt="${esc(nickOf(p))}" title="${esc(nickOf(p))}" data-u="${esc(p)}" src="${avaOf(p)}" width="24" height="24">`).join('');
   renderBar();
 }
-vt.addEventListener('click', e => { const r = e.target.closest('.vr[data-u]'); if (r && r.dataset.u !== myId()) nudge(r.dataset.u); });
+// в личке, пока друга нет в звонке — его «призрак»: звоним / не в сети, ждём
+function waitRow(vs) {
+  const r = S.rooms.get(V.room); if (!r || r.kind !== 'dm') return '';
+  const p = dmPeer(r); if (!p || vs[p]) return '';
+  const on = isOnline(p), what = ringOut && ringOut.peer === p ? 'звоним…' : on ? 'в сети · не в звонке' : 'не в сети · позвоним, как зайдёт';
+  return `<div class="vr wait${on ? '' : ' off'}" data-wait="${esc(p)}"><img class="ava" alt="" src="${avaOf(p)}"><b style="color:${colorOf(p)}">${esc(nickOf(p))}</b><span class="ping">${what}</span>${on && !ringOut ? `<button class="vtag js-reRing" type="button">Позвонить</button>` : ''}</div>`;
+}
+vt.addEventListener('click', e => {
+  if (e.target.closest('.js-reRing')) { const r = S.rooms.get(V.room); if (r && r.kind === 'dm' && !ringOut) ring(V.room, dmPeer(r)); return; }
+  const r = e.target.closest('.vr[data-u]'); if (r && r.dataset.u !== myId()) nudge(r.dataset.u);
+});
 $('.js-mav').addEventListener('click', e => { const i = e.target.closest('img[data-u]'); if (i && i.dataset.u !== myId()) nudge(i.dataset.u); });
 
 /* VU-метры и «говорит» */
@@ -372,9 +381,21 @@ function syncCtrl() {
   const mm = $('.js-mmic'), md = $('.js-mdeaf');
   mm.innerHTML = micB.innerHTML; mm.classList.toggle('off', !mOn); mm.setAttribute('aria-pressed', String(mOn)); mm.setAttribute('aria-label', 'Микрофон');
   md.innerHTML = deafB.innerHTML; md.classList.toggle('off', V.deaf); md.setAttribute('aria-pressed', String(!V.deaf)); md.setAttribute('aria-label', 'Звук');
+  bus.emit('selfstate');
 }
-export function toggleMic() { if (!V.room) return; if (V.deaf) { V.deaf = false; applyVolAll(); } V.mic = !V.mic; applyMic(); pushState(); tmsg('ok', V.mic ? 'мик включён' : 'мик выключен'); tone(V.mic ? [[660, .04], [880, .05]] : [[660, .04], [440, .05]], .5); }
-export function toggleDeaf() { if (!V.room) return; V.deaf = !V.deaf; applyVolAll(); applyMic(); pushState(); tmsg('ok', V.deaf ? 'звук выключен — ты никого не слышишь, и тебя тоже' : 'звук снова включён'); }
+// мик и звук переключаются и вне звонка: состояние запоминается и действует при следующем заходе
+export function toggleMic() {
+  if (V.deaf) { V.deaf = false; setPref('selfDeaf', false); if (V.room) applyVolAll(); V.mic = true; } // как в Discord: из «без звука» — сразу всё включено
+  else V.mic = !V.mic;
+  setPref('selfMute', !V.mic);
+  if (V.room) { applyMic(); pushState(); } else syncCtrl();
+  tmsg('ok', V.mic ? 'мик включён' : 'мик выключен' + (V.room ? '' : ' — так и зайдёшь в звонок')); tone(V.mic ? [[660, .04], [880, .05]] : [[660, .04], [440, .05]], .5);
+}
+export function toggleDeaf() {
+  V.deaf = !V.deaf; setPref('selfDeaf', V.deaf);
+  if (V.room) { applyVolAll(); applyMic(); pushState(); } else syncCtrl();
+  tmsg('ok', V.deaf ? 'звук выключен — ты никого не слышишь, и тебя тоже' : 'звук снова включён'); tone(V.deaf ? [[520, .04], [330, .06]] : [[440, .04], [660, .05]], .5);
+}
 micB.addEventListener('click', toggleMic); deafB.addEventListener('click', toggleDeaf);
 $('.js-mmic').addEventListener('click', toggleMic); $('.js-mdeaf').addEventListener('click', toggleDeaf);
 leaveB.addEventListener('click', () => leave()); $('.js-mleave').addEventListener('click', () => leave());
@@ -471,7 +492,7 @@ bus.on('voice', (room, peer, st, had) => {
   if (room === V.room) {
     if (st && !had) { pcFor(peer); tone([[587, .05], [880, .08]], .6); tmsg('ok', `${nickOf(peer)} зашёл в голос`, true); }
     else if (st && !V.peers.has(peer)) pcFor(peer);
-    if (!st) { closePeer(peer); if (had) { tone([[880, .05], [587, .08]], .6); tmsg('ok', `${nickOf(peer)} вышел из голоса`, true); } const r = S.rooms.get(room); if (r && r.kind === 'dm' && !Object.keys(voiceIn(room)).some(p => p !== myId())) { if (Date.now() - V.since > 3000) leave(); } }
+    if (!st) { closePeer(peer); if (had) { tone([[880, .05], [587, .08]], .6); tmsg('ok', `${nickOf(peer)} вышел из голоса`, true); } const r = S.rooms.get(room); if (r && r.kind === 'dm' && !Object.keys(voiceIn(room)).some(p => p !== myId())) { if (Date.now() - V.since > 3000) leave({ logCall: false }); /* запись «звонок · 0:23» оставляет тот, кто положил трубку — без дублей */ } }
     if (st && !st.share) { const P = V.peers.get(peer); if (P && P.media.scr) { delete P.media.scr; bus.emit('media', peer, 'scr', null); } }
     if (st && !st.cam) { const P = V.peers.get(peer); if (P && P.media.cam) { delete P.media.cam; bus.emit('media', peer, 'cam', null); } }
     renderRows(); syncShareBar();
@@ -487,9 +508,7 @@ bus.on('open', id => {
 });
 bus.on('pref', k => {
   if (k === 'vol' || k === 'mute' || k === 'outVol' || k === 'outId') applyVolAll();
-  if (k === 'micVol' && V.gain) V.gain.gain.value = (prefs.micVol ?? 100) / 100;
-  if ((k === 'gate' || k === 'gateDb') && V.gate) gateSet(V.gate);
-  if (['micId', 'ns', 'ec', 'agc'].includes(k) && V.room) micRestart();
+  if (['micId', 'nsMode', 'ec', 'agc'].includes(k) && V.room) micRestart();
   if (k === 'bitrate') V.peers.forEach(applyBitrate);
   if (k === 'ptt') applyMic();
 });
@@ -497,20 +516,57 @@ bus.on('peer-vol', () => { applyVolAll(); renderRows(); });
 bus.on('room_removed', room => { if (room === V.room) leave({ silent: true }); });
 
 /* ---------- звонки в личке ---------- */
-let ringOut = null, ringIn = new Map();
 export async function call(room) {
   const r = S.rooms.get(room); if (!r || r.kind !== 'dm') return;
   const p = dmPeer(r);
-  if (!isOnline(p)) { tmsg('warn', `${nickOf(p)} не в сети — звонок не дойдёт`); return; }
   if (voiceIn(room)[p]) { join(room); return; } // друг уже ждёт в звонке
   await join(room, { silent: true });
   if (V.room !== room) return;
-  try { await api('ev', { room, kind: 'ring', data: {} }); } catch (e) { fail(e); leave({ silent: true }); return; }
-  let n = 0;
-  const t = toast({ ava: avaOf(p), icon: 'phone', title: `звоним ${nickOf(p)}…`, sub: 'напрямую P2P, без серверов', tag: 'Звонок', cls: 'ring', actions: [{ label: 'Сбросить', cls: 'gbtn', fn: () => { hangOut('cancel'); } }] });
-  ringOut = { room, peer: p, t, iv: setInterval(() => { if (++n > 10) { hangOut('timeout'); return; } tone(TONES.ring, .8); }, 2500) };
-  tone(TONES.ring, .8); bus.emit('voice', room);
+  if (!isOnline(p)) {
+    // друг не в сети — сижу в звонке и жду: как появится, ядро скажет ему, что я тут, и я сразу позвоню
+    waitDm = p; tone(TONES.join);
+    toast({ ava: avaOf(p), icon: 'phone', title: `${nickOf(p)} сейчас не в сети`, sub: 'ты в звонке — как зайдёт, ему позвонит, и он увидит, что ты ждёшь', tag: 'Ждём', dur: 9000,
+      actions: [{ label: 'Не ждать', cls: 'gbtn', fn: () => leave({ silent: true }) }] });
+    renderRows(); return;
+  }
+  ring(room, p);
 }
+async function ring(room, p, back) {
+  waitDm = '';
+  try { await api('ev', { room, kind: 'ring', data: {} }); } catch (e) { fail(e); leave({ silent: true }); return; }
+  if (V.room !== room || ringOut) return;
+  let n = 0;
+  const t = toast({ ava: avaOf(p), icon: 'phone', title: back ? `${nickOf(p)} в сети — звоним…` : `звоним ${nickOf(p)}…`, sub: 'напрямую P2P, без серверов', tag: 'Звонок', cls: 'ring', actions: [{ label: 'Сбросить', cls: 'gbtn', fn: () => { hangOut('cancel'); } }] });
+  ringOut = { room, peer: p, t, iv: setInterval(() => { if (++n > 10) { hangOut('timeout'); return; } tone(TONES.ring, .8); }, 2500) };
+  tone(TONES.ring, .8); bus.emit('voice', room); renderRows();
+}
+// друг, которого я жду в звонке, появился в сети — звоню ему
+bus.on('presence', (peer, on) => {
+  if (!on || !V.room || ringOut) return;
+  const r = S.rooms.get(V.room); if (!r || r.kind !== 'dm' || dmPeer(r) !== peer || voiceIn(V.room)[peer]) { if (r && r.kind === 'dm') renderRows(); return; }
+  const room = V.room; renderRows();
+  setTimeout(() => { if (V.room === room && !ringOut && isOnline(peer) && !voiceIn(room)[peer]) ring(room, peer, true); }, 1500);
+});
+bus.on('presence', (peer, on) => { if (!on && waitDm !== peer && V.room) { const r = S.rooms.get(V.room); if (r && r.kind === 'dm' && dmPeer(r) === peer) renderRows(); } });
+bus.on('vleft', () => { waitDm = ''; });
+// друг ждёт меня в звонке (зашёл, пока я был не в сети, или звонок не дошёл) — напоминаю, если не звонит сам
+function waitingFor(room, peer) {
+  const r = S.rooms.get(room); if (!r || r.kind !== 'dm' || dmPeer(r) !== peer) return;
+  setTimeout(() => {
+    if (V.room === room || ringIn.has(room) || !voiceIn(room)[peer] || Date.now() - (declined.get(room) || 0) < 60000) return;
+    if (document.querySelector(`.toast[data-wait="${CSS.escape(room)}"]`)) return;
+    const t = toast({ ava: avaOf(peer), icon: 'phone', title: `${nickOf(peer)} в звонке с тобой`, sub: 'ждёт, когда зайдёшь', tag: 'Звонок', cls: 'ring',
+      actions: [{ label: 'Зайти', cls: 'cbtn', fn: () => join(room) }, { label: 'Не сейчас', cls: 'gbtn', fn: () => declined.set(room, Date.now()) }] });
+    if (t) t.dataset.wait = room;
+    notify({ tone: 'ring', say: `${nickOf(peer)} ждёт тебя в звонке` });
+  }, 2500);
+}
+const unwait = room => document.querySelectorAll(`.toast[data-wait="${CSS.escape(room)}"]`).forEach(closeToast);
+bus.on('voice', (room, peer, st, had) => {
+  if (st && !had && peer !== myId() && room !== V.room) waitingFor(room, peer);
+  if (!st || (peer === myId() && st)) unwait(room);
+});
+export function checkWaiting() { for (const room of Object.keys(S.voices)) for (const peer of Object.keys(S.voices[room] || {})) if (peer !== myId()) waitingFor(room, peer); }
 function hangOut(why) {
   if (!ringOut) return; const { room, peer, t, iv } = ringOut; ringOut = null;
   clearInterval(iv); closeToast(t);
@@ -518,6 +574,7 @@ function hangOut(why) {
   api('ev', { room, kind: 'ring_stop', data: { why } }).catch(() => {});
   if (why === 'timeout') { tmsg('warn', `${nickOf(peer)} не ответил`); api('send', { room, kind: 'sys', text: 'missed' }).then(m => import('./state.js').then(s => s.pushLocal(m))).catch(() => {}); }
   if (why === 'declined') tmsg('warn', `${nickOf(peer)} сбросил звонок`);
+  if (why === 'left') return;
   if (V.room === room) leave({ silent: true, logCall: false });
   else layout();
 }
@@ -527,7 +584,7 @@ bus.on('ev:ring', v => {
   if (V.room === v.room) return;
   const p = v.from; let n = 0;
   const t = toast({ ava: avaOf(p), icon: 'phone', title: `${nickOf(p)} звонит`, sub: 'личка · напрямую P2P', tag: '30 сек', cd: 30, cls: 'ring',
-    actions: [{ label: 'Ответить', cls: 'cbtn', fn: () => { stopRing(v.room); join(v.room); } }, { label: 'Сбросить', cls: 'gbtn', fn: () => { stopRing(v.room); api('ev', { room: v.room, kind: 'ring_stop', data: { why: 'declined' } }).catch(() => {}); } }],
+    actions: [{ label: 'Ответить', cls: 'cbtn', fn: () => { stopRing(v.room); join(v.room); } }, { label: 'Сбросить', cls: 'gbtn', fn: () => { stopRing(v.room); declined.set(v.room, Date.now()); api('ev', { room: v.room, kind: 'ring_stop', data: { why: 'declined' } }).catch(() => {}); } }],
     onTimeout: () => stopRing(v.room) });
   const iv = setInterval(() => { if (++n > 12) { stopRing(v.room); return; } tone([[554, .15], [440, .15]], 1.1); }, 2500);
   ringIn.set(v.room, { t, iv });
@@ -564,7 +621,7 @@ function voiceItems(p) {
     '-'] });
   const st = voiceIn(V.room)[p] || {};
   return personItems(p, { extra: V.room && voiceIn(V.room)[p] ? [
-    { icon: 'hand', label: 'Пнуть', fn: () => nudge(p) },
+    (S.friends.get(p) || {}).state === 'friend' ? null : { icon: 'hand', label: 'Пнуть', fn: () => nudge(p) },
     !st.cam ? { icon: 'video', label: 'Попросить вебку', fn: () => bus.emit('ask', p, 'cam') } : null,
     !st.share ? { icon: 'monitor-up', label: 'Попросить показать экран', fn: () => bus.emit('ask', p, 'share') } : null,
   ] : [] });
@@ -572,21 +629,48 @@ function voiceItems(p) {
 onCtx('.vr[data-u]', el => voiceItems(el.dataset.u));
 onCtx('.js-mav img[data-u]', el => voiceItems(el.dataset.u));
 let nudgeT = 0;
-async function nudge(peer) {
-  if (Date.now() - nudgeT < 2500) return; nudgeT = Date.now();
-  try { await api('ev', { room: V.room, to: peer, kind: 'nudge', data: {} }); tmsg('ok', `пнул ${nickOf(peer)}`); } catch (e) { fail(e); }
+export async function nudge(peer, room) {
+  room = room || V.room || (S.friends.get(peer) || {}).dm || '';
+  if (!room) { tmsg('warn', 'пнуть можно друга или того, кто с тобой в голосе'); return; }
+  if (Date.now() - nudgeT < 2500) { tmsg('ok', 'не так часто — подожди пару секунд'); return; }
+  nudgeT = Date.now();
+  try { await api('ev', { room, to: peer, kind: 'nudge', data: {} }); tmsg('ok', `пнул ${nickOf(peer)} — у него на экране прилетел кроссовок`); } catch (e) { fail(e); }
+}
+bus.on('nudge', (peer, room) => nudge(peer, room));
+let nudgeEl = null;
+/** пинок: прилетает кроссовок в аватарку того, кто пнул, — понятно, кто и зачем, без тряски окна */
+function showNudge(from) {
+  if (nudgeEl) nudgeEl.remove();
+  const d = document.createElement('div'); d.className = 'nudge'; d.setAttribute('role', 'alert'); nudgeEl = d;
+  d.innerHTML = `<div class="ng-card glass"><span class="ng-hit"><i class="ng-ring"></i><i class="ng-ring r2"></i><img class="ng-ava" alt="" src="${avaOf(from)}"><img class="ng-boot" alt="" src="emoji/1f45f.webp"><img class="ng-boom" alt="" src="emoji/1f4a5.webp"></span><b style="--c:${colorOf(from)}">${esc(nickOf(from))}</b><small>пнул тебя — зовёт</small></div>`;
+  document.body.appendChild(d);
+  d.addEventListener('click', () => d.remove());
+  requestAnimationFrame(() => d.classList.add('on'));
+  setTimeout(() => { d.classList.add('out'); setTimeout(() => d.remove(), 500); }, reduce ? 2200 : 2600);
+  if (!reduce) app.animate([{ transform: 'none' }, { transform: 'translateX(5px) rotate(.15deg)', offset: .18 }, { transform: 'translateX(-2px)', offset: .45 }, { transform: 'none' }], { duration: 420, delay: 430, easing: 'ease-out' });
 }
 bus.on('ev:nudge', v => {
-  if (!voiceIn(v.room)[v.from] && v.room !== V.room) return;
-  app.classList.remove('shake'); void app.offsetWidth; app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 600);
-  tone([[220, .06], [180, .08]], 1.2); tmsg('ping', `${nickOf(v.from)} пнул тебя`);
+  const r = S.rooms.get(v.room), dm = r && r.kind === 'dm' && dmPeer(r) === v.from;
+  if (!dm && !voiceIn(v.room)[v.from] && v.room !== V.room) return;
+  showNudge(v.from);
+  tone([[260, .05], [200, .06], [520, .05]], 1.1); notify({ tone: 'msg', say: `${nickOf(v.from)} пнул тебя` });
 });
 
 /* ---------- кнопки F1–F6 ---------- */
 const pop = $('.js-vpop');
-export function popToggle(on) { pop.hidden = on === undefined ? !pop.hidden : !on; $('.js-btns').classList.toggle('on', !pop.hidden); }
+app.appendChild(pop); // живёт над сеткой: узкая панель голоса её больше не обрезает
+function placePop() {
+  const b = $('.js-btns').getBoundingClientRect(), pn = $('.pane.voice').getBoundingClientRect();
+  if (!b.width) return popToggle(false);
+  const w = Math.min(560, Math.max(300, pn.width - 20)), left = clamp(pn.right - 10 - w, 8, innerWidth - w - 8);
+  Object.assign(pop.style, { left: left + 'px', width: w + 'px', bottom: (innerHeight - b.top + 8) + 'px', maxHeight: Math.max(180, b.top - 18) + 'px' });
+}
+export function popToggle(on) { pop.hidden = on === undefined ? !pop.hidden : !on; $('.js-btns').classList.toggle('on', !pop.hidden); if (!pop.hidden) placePop(); }
+addEventListener('resize', () => { if (!pop.hidden) placePop(); });
+new ResizeObserver(() => { if (!pop.hidden) placePop(); }).observe($('.pane.voice'));
 $('.js-btns').addEventListener('click', e => { e.stopPropagation(); popToggle(); });
 document.addEventListener('click', e => { if (!pop.hidden && !e.target.closest('.js-vpop,.js-btns')) popToggle(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden && !e.defaultPrevented) { e.preventDefault(); popToggle(false); } });
 const RND = ['Кто не спит — тот молодец', 'Погнали!', 'Ну вы даёте', 'Это база', 'Я щас вернусь', 'Кринж', 'Красава!', 'Хорош'];
 let brbUntil = 0, roll = null;
 async function fireKey(k) {
@@ -594,6 +678,7 @@ async function fireKey(k) {
   const b = $(`.key[data-k="${k}"]`, pop); if (!b) return;
   b.classList.remove('hit'); void b.offsetWidth; b.classList.add('hit');
   const act = b.dataset.act, say = b.dataset.say;
+  const rm = S.rooms.get(V.room); if (rm && rm.kind === 'dm' && (act === 'roll' || act === 'call')) return; // в личке перекличка и сбор ни к чему
   try {
     if (say) { const text = say === '?' ? pick(RND) : say; await api('ev', { room: V.room, kind: 'say', data: { text } }); playSay(myId(), text); return; }
     if (act === 'roll') { roll = { here: new Set([myId()]), t0: Date.now() }; await api('ev', { room: V.room, kind: 'roll', data: {} }); tmsg('ok', 'перекличка: ждём 10 сек…'); setTimeout(finishRoll, 11000); return; }
@@ -625,14 +710,21 @@ bus.on('ev:gather', v => {
 pop.addEventListener('click', e => { const b = e.target.closest('.key[data-k]'); if (b) fireKey(b.dataset.k); });
 
 /* ---------- хоткеи ---------- */
+export const pttCode = () => prefs.pttKey || 'KeyV';
+/** рация: держишь — говоришь (V.gkeys — клавишу ловит оболочка даже в игре, тогда окно её не трогает) */
+export function setPtt(on) { if (V.ptt === on) return; V.ptt = on; applyMic(); }
 const typing = e => e.target.closest && e.target.closest('input,textarea,select,[contenteditable]');
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyM') { e.preventDefault(); toggleMic(); return; }
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyD') { e.preventDefault(); toggleDeaf(); return; }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyS') { e.preventDefault(); if (V.share) stopShare(); else if (V.room) openW('share'); return; }
   if (/^F[1-6]$/.test(e.key) && V.room) { e.preventDefault(); fireKey(e.key); return; }
-  if (e.code === 'KeyV' && +prefs.ptt && !typing(e) && !e.repeat && V.room) { V.ptt = true; applyMic(); }
+  if (e.code === pttCode() && +prefs.ptt && !V.gkeys && !typing(e) && !e.repeat && V.room) setPtt(true);
 });
-document.addEventListener('keyup', e => { if (e.code === 'KeyV' && V.ptt) { V.ptt = false; applyMic(); } });
-addEventListener('blur', () => { if (V.ptt) { V.ptt = false; applyMic(); } });
+document.addEventListener('keyup', e => { if (e.code === pttCode() && !V.gkeys) setPtt(false); });
+// боковые кнопки мыши и колёсико тоже годятся для рации
+const mbtn = e => 'Mouse' + (e.button + 1);
+document.addEventListener('mousedown', e => { if (e.button >= 1 && mbtn(e) === pttCode() && +prefs.ptt && V.room) { e.preventDefault(); if (!V.gkeys) setPtt(true); } }, true);
+document.addEventListener('mouseup', e => { if (e.button >= 1 && mbtn(e) === pttCode()) { e.preventDefault(); if (!V.gkeys) setPtt(false); } }, true);
+addEventListener('blur', () => { if (V.ptt && !V.gkeys) setPtt(false); });
 window.addEventListener('beforeunload', () => { if (V.room) { try { api('voice_leave'); } catch (_) {} } });

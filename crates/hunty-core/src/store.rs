@@ -18,6 +18,15 @@ pub struct Profile {
     pub status: String,
     #[serde(default)]
     pub color: String,
+    /// «о себе» — до 190 символов
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bio: String,
+    /// шапка профиля: "" (цвет ника), "g:<имя градиента>" или data:image/… до 200 КБ
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub banner: String,
+    /// «играет в …» — ставит приложение, если ты разрешил
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub game: String,
     #[serde(default)]
     pub ts: u64,
 }
@@ -64,6 +73,9 @@ pub struct Room {
     pub name: String,
     #[serde(default)]
     pub color: String,
+    /// аватарка группы: data:image/… до 96 КБ ("" — плитка с буквой)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pic: String,
     #[serde(default)]
     pub secret: String,
     pub owner: String,
@@ -127,6 +139,10 @@ pub struct Msg {
 
 /// Вложение длиннее — в памяти только «лёгкая» копия, полная строка читается с диска.
 pub const HEAVY: usize = 4096;
+/// Сколько после отправки можно править сообщение (UI показывает обратный отсчёт).
+pub const EDIT_WINDOW_MS: u64 = 30_000;
+/// Правило «30 секунд» действует для сообщений начиная с v0.3 — старые правки не пропадут.
+pub const EDIT_RULE_SINCE: u64 = 1793404800000;
 
 /// Служебные сообщения, которые меняют другие: реакция, правка, удаление у всех.
 pub fn is_meta(kind: &str) -> bool {
@@ -601,7 +617,9 @@ impl Store {
 
     fn edited(&self, m: &Msg) -> Option<&Msg> {
         let ms = self.metas.get(&m.room)?.get(&m.id)?;
-        ms.iter().filter(|x| x.kind == "edit" && x.from == m.from).max_by(|a, b| (a.ts, &a.id).cmp(&(b.ts, &b.id)))
+        // с v0.3 править можно 30 секунд после отправки: поздние правки (часы те же — автора) не применяем
+        let late = |x: &Msg| m.ts >= EDIT_RULE_SINCE && x.ts > m.ts + EDIT_WINDOW_MS + 10_000;
+        ms.iter().filter(|x| x.kind == "edit" && x.from == m.from && !late(x)).max_by(|a, b| (a.ts, &a.id).cmp(&(b.ts, &b.id)))
     }
 
     /// Стоит ли сейчас моя реакция e на сообщении.
@@ -687,6 +705,42 @@ impl Store {
 
     pub fn count(&self, room: &str) -> usize {
         self.msgs(room).iter().filter(|m| !is_meta(&m.kind)).count()
+    }
+
+    /// Поиск по переписке (без учёта регистра, ё = е), новые сверху: (сколько всего нашлось, первые limit).
+    /// Ищу в тексте (с учётом правок) и в именах файлов; from — только сообщения этого автора.
+    pub fn search(&self, room: &str, q: &str, from: &str, limit: usize) -> (usize, Vec<Value>) {
+        let norm = |x: &str| x.to_lowercase().replace('ё', "е");
+        let q = norm(q.trim());
+        let mut total = 0;
+        let mut out = vec![];
+        if q.is_empty() && from.is_empty() {
+            return (0, out);
+        }
+        for m in self.msgs(room).iter().rev() {
+            if is_meta(&m.kind) || m.kind == "sys" || (!from.is_empty() && m.from != from) {
+                continue;
+            }
+            if !q.is_empty() {
+                let text = self.edited(m).map(|e| e.text.as_str()).unwrap_or(&m.text);
+                let name = m.data.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                if !norm(text).contains(&q) && !norm(name).contains(&q) {
+                    continue;
+                }
+            }
+            total += 1;
+            if out.len() < limit {
+                out.push(self.view(m));
+            }
+        }
+        (total, out)
+    }
+
+    /// Сколько видимых сообщений новее ts (для прыжка к найденному: сколько догрузить).
+    pub fn newer_than(&self, room: &str, ts: u64) -> usize {
+        let v = self.msgs(room);
+        let i = v.partition_point(|m| m.ts < ts);
+        v[i..].iter().filter(|m| !is_meta(&m.kind)).count()
     }
 
     pub fn unread(&self, room: &str, me: &str) -> usize {

@@ -63,6 +63,8 @@ export async function shell(cmd, args = {}) {
   if (!inTauri) throw new Error('нет оболочки');
   return T.core.invoke(cmd, args);
 }
+/** событие оболочки (Tauri): клавиши в играх и т. п. */
+export function shellListen(ev, fn) { if (inTauri) T.event.listen(ev, e => fn(e.payload)).catch(() => {}); }
 export async function openUrl(url) {
   if (inTauri) { try { await T.core.invoke('hunty_open', { url }); return; } catch (_) {} }
   window.open(url, '_blank', 'noopener');

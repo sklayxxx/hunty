@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, dmPeer, voiceIn } from './state.js';
 import { app, tmsg, tone } from './ui.js';
 import { V } from './voice.js';
-import { EMO, EMN } from './stickers.js';
+import { HUNTY, stkSrc, stkName } from './stickers.js';
 
 const demoP = $('.pane.demo'), scr = $('.js-screen'), dvid = $('.js-dvid'), dempty = $('.js-dempty');
 const camsEl = $('.js-cams'), ink = $('.js-ink'), pins = $('.js-pins'), fl = $('.js-floaters');
@@ -307,13 +307,14 @@ bus.on('ev:pin', v => {
 bus.on('ev:erase', v => { if (v.room === room()) clearFrom(v.from); });
 
 /* ---------- реакции ---------- */
-const RX = ['fire', 'joy', 'grimace', 'thumbs', 'eyes', 'skull'].filter(k => EMO[k]);
-rbar.innerHTML = RX.map(k => `<button class="rbtn" type="button" data-r="${k}" aria-label="${esc(EMN[k] || k)}" title="${esc(EMN[k] || k)}"><img alt="" src="${EMO[k]}"></button>`).join('');
+const HK = new Set(HUNTY.map(h => h[0]));
+const RX = ['fire', 'joy', 'grimace', 'thumbs', 'eyes', 'skull'].filter(k => HK.has(k));
+rbar.innerHTML = RX.map(k => `<button class="rbtn" type="button" data-r="${k}" aria-label="${esc(stkName({ k }))}" title="${esc(stkName({ k }))}"><img alt="" src="${stkSrc({ k })}"></button>`).join('');
 function floatEmo(k, who) {
-  if (!EMO[k] || reduce && fl.children.length > 3) return;
+  if (!HK.has(k) || reduce && fl.children.length > 3) return;
   const s = document.createElement('span'); s.className = 'floater';
   s.style.left = (6 + Math.random() * 76) + '%'; s.style.setProperty('--dx', (Math.random() * 40 - 20).toFixed(0) + 'px'); s.style.setProperty('--rot', (Math.random() * 24 - 12).toFixed(0) + 'deg');
-  s.innerHTML = `<img alt="" src="${EMO[k]}">` + (who ? `<b>${esc(who)}</b>` : '');
+  s.innerHTML = `<img alt="" src="${stkSrc({ k })}">` + (who ? `<b>${esc(who)}</b>` : '');
   fl.appendChild(s); while (fl.children.length > 16) fl.firstElementChild.remove();
   setTimeout(() => s.remove(), 2700);
 }
@@ -323,6 +324,6 @@ rbar.addEventListener('click', e => {
   floatEmo(b.dataset.r, myNick()); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); tone([[990, .05]], .5);
   if (Date.now() - rxT > 250) { rxT = Date.now(); send('react', { k: b.dataset.r }); }
 });
-bus.on('ev:react', v => { if (v.room === room() && v.data && EMO[v.data.k]) floatEmo(v.data.k, nickOf(v.from)); });
+bus.on('ev:react', v => { if (v.room === room() && v.data && HK.has(v.data.k)) floatEmo(v.data.k, nickOf(v.from)); });
 
 render();

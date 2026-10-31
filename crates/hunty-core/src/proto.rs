@@ -35,6 +35,9 @@ pub struct RoomWire {
     pub name: String,
     #[serde(default)]
     pub color: String,
+    /// аватарка группы: data:image/… до 96 КБ ("" — плитка с буквой)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pic: String,
     #[serde(default)]
     pub secret: String,
     pub owner: String,

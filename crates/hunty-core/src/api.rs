@@ -58,7 +58,7 @@ impl Node {
             })
             .collect();
         json!({
-            "id": r.id, "kind": r.kind, "name": r.name, "color": r.color, "owner": r.owner,
+            "id": r.id, "kind": r.kind, "name": r.name, "color": r.color, "pic": r.pic, "owner": r.owner,
             "invite": r.invite, "voice": r.voice, "muted": r.muted, "pending": r.pending,
             "created": r.created, "members": members, "unread": self.st.unread(id, &self.me_s),
             "last": self.st.last_visible(id), "read_ts": r.read_ts, "admin": r.is_admin(&self.me_s),
@@ -182,6 +182,21 @@ impl Node {
         }
         if let Some(c) = v.get("color").and_then(|x| x.as_str()) {
             p.color = c.chars().take(32).collect();
+        }
+        if let Some(x) = v.get("bio").and_then(|x| x.as_str()) {
+            p.bio = x.trim().chars().take(190).collect();
+        }
+        if let Some(x) = v.get("banner").and_then(|x| x.as_str()) {
+            if x.len() > 200 * 1024 {
+                return Err("картинка шапки слишком большая (до 200 КБ)".into());
+            }
+            if !(x.is_empty() || x.starts_with("g:") || x.starts_with("data:image/")) {
+                return Err("шапка: градиент или картинка".into());
+            }
+            p.banner = x.to_string();
+        }
+        if let Some(x) = v.get("game").and_then(|x| x.as_str()) {
+            p.game = x.trim().chars().take(48).collect();
         }
         if p.nick.is_empty() {
             return Err("нужен ник".into());
@@ -361,6 +376,7 @@ impl Node {
                         kind: "group".into(),
                         name,
                         color: s(&v, "color"),
+                        pic: room_pic(&v)?,
                         secret: rand_hex(16),
                         owner: self.me_s.clone(),
                         members,
@@ -453,6 +469,7 @@ impl Node {
                         kind: "group".into(),
                         name: jc.n.chars().take(32).collect(),
                         color: jc.c.clone(),
+                        pic: String::new(),
                         secret: jc.s.clone(),
                         owner: String::new(),
                         members: Default::default(),
@@ -518,7 +535,7 @@ impl Node {
                 if let Some(m) = b(&v, "muted") {
                     r.muted = m;
                 }
-                let meta = v.get("name").is_some() || v.get("color").is_some() || v.get("invite").is_some() || v.get("voice").is_some();
+                let meta = v.get("name").is_some() || v.get("color").is_some() || v.get("pic").is_some() || v.get("invite").is_some() || v.get("voice").is_some();
                 if meta {
                     if !r.is_admin(&me) {
                         return Err("менять хату может только админ".into());
@@ -531,6 +548,9 @@ impl Node {
                     }
                     if let Some(c) = v.get("color").and_then(|x| x.as_str()) {
                         r.color = c.to_string();
+                    }
+                    if v.get("pic").is_some() {
+                        r.pic = room_pic(&v)?;
                     }
                     if let Some(i) = v.get("invite").and_then(|x| x.as_str()) {
                         r.invite = if i == "admin" { "admin".into() } else { "all".into() };
@@ -586,6 +606,19 @@ impl Node {
                 let limit = v.get("limit").and_then(|x| x.as_u64()).unwrap_or(80).min(500) as usize;
                 Ok(json!({ "room": id, "msgs": self.st.page(&id, before, limit), "total": self.st.count(&id) }))
             }
+            "search" => {
+                let id = s(&v, "room");
+                let limit = v.get("limit").and_then(|x| x.as_u64()).unwrap_or(50).min(200) as usize;
+                let (total, msgs) = self.st.search(&id, &s(&v, "q"), &s(&v, "from"), limit);
+                Ok(json!({ "room": id, "msgs": msgs, "total": total }))
+            }
+            "msgs_to" => {
+                // догрузить историю до сообщения с ts включительно (+ немного постарше для контекста)
+                let id = s(&v, "room");
+                let ts = v.get("ts").and_then(|x| x.as_u64()).unwrap_or(0);
+                let n = (self.st.newer_than(&id, ts) + 20).min(5000);
+                Ok(json!({ "room": id, "msgs": self.st.page(&id, None, n), "total": self.st.count(&id) }))
+            }
             "send" => {
                 let id = s(&v, "room");
                 let kind = match s(&v, "kind").as_str() {
@@ -630,6 +663,9 @@ impl Node {
                 }
                 if text.trim().is_empty() && t.kind == "text" {
                     return Err("пустое сообщение — лучше удали".into());
+                }
+                if now_ms().saturating_sub(t.ts) > EDIT_WINDOW_MS + 5_000 {
+                    return Err("править можно только 30 секунд после отправки".into());
                 }
                 self.post_meta(&id, "edit", &text, json!({ "to": to }))
             }
@@ -874,4 +910,19 @@ impl Node {
             other => Err(format!("неизвестная команда: {other}")),
         }
     }
+}
+
+/// аватарка группы из команды: "" или data:image/… до 96 КБ
+fn room_pic(v: &Value) -> Result<String, String> {
+    let p = v.get("pic").and_then(|x| x.as_str()).unwrap_or("");
+    if p.is_empty() {
+        return Ok(String::new());
+    }
+    if !p.starts_with("data:image/") {
+        return Err("аватарка группы — только картинка".into());
+    }
+    if p.len() > 96 * 1024 {
+        return Err("аватарка группы слишком большая (до 96 КБ)".into());
+    }
+    Ok(p.to_string())
 }
