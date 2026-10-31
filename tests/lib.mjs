@@ -19,8 +19,8 @@ export async function client(ws, name) {
     try {
       const c = await new Promise((res, rej) => { const s = new WebSocket(`ws://127.0.0.1:${ws}`); s.onopen = () => res(s); s.onerror = rej; });
       let id = 0; const wait = new Map(); const evs = []; const subs = [];
-      c.onmessage = m => { const v = JSON.parse(m.data); if (v.id != null && wait.has(v.id)) { const [r, j] = wait.get(v.id); wait.delete(v.id); v.err ? j(new Error(v.err)) : r(v.ok); } else if (v.ev) { evs.push(v); subs.forEach(f => f(v)); if (process.env.V) console.log(`  ${name} <- ${v.ev}`, v.ev === 'log' ? v.text : ''); } };
-      const cmd = (cmd, a = {}) => new Promise((r, j) => { const i = ++id; wait.set(i, [r, j]); c.send(JSON.stringify({ id: i, cmd, ...a })); });
+      c.onmessage = m => { const v = JSON.parse(m.data); if (v.rid != null && wait.has(v.rid)) { const [r, j] = wait.get(v.rid); wait.delete(v.rid); v.err ? j(new Error(v.err)) : r(v.ok); } else if (v.ev) { evs.push(v); subs.forEach(f => f(v)); if (process.env.V) console.log(`  ${name} <- ${v.ev}`, v.ev === 'log' ? v.text : ''); } };
+      const cmd = (cmd, a = {}) => new Promise((r, j) => { const i = ++id; wait.set(i, [r, j]); c.send(JSON.stringify({ ...a, cmd, rid: i })); });
       const until = (pred, ms = 15000) => new Promise((r, j) => { const f = evs.find(pred); if (f) return r(f); const t = setTimeout(() => j(new Error(`${name}: не дождался события`)), ms); subs.push(v => { if (pred(v)) { clearTimeout(t); r(v); } }); });
       return { cmd, until, evs, close: () => c.close() };
     } catch { await sleep(200); }

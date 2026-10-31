@@ -135,9 +135,10 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const lgDefs = document.createElementNS(SVGNS, 'svg');
 lgDefs.setAttribute('width', '0'); lgDefs.setAttribute('height', '0'); lgDefs.setAttribute('aria-hidden', 'true');
 lgDefs.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden'; document.body.prepend(lgDefs);
-let lgN = 0; const lgMaps = {};
+let lgN = 0; const lgMaps = new Map(); // карты линз: держим последние 40, остальное выкидываем
 function lensMap(w, h, r, bez, k) {
-  const W = Math.max(2, Math.round(w * k)), H = Math.max(2, Math.round(h * k)); const key = [W, H, r, bez].join('x'); if (lgMaps[key]) return lgMaps[key];
+  const W = Math.max(2, Math.round(w * k)), H = Math.max(2, Math.round(h * k)); const key = [W, H, r, bez].join('x');
+  if (lgMaps.has(key)) { const v = lgMaps.get(key); lgMaps.delete(key); lgMaps.set(key, v); return v; }
   const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const im = x.createImageData(W, H), d = im.data; const cx = w / 2, cy = h / 2;
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const px = (i + .5) / k - cx, py = (j + .5) / k - cy; const qx = Math.abs(px) - (cx - r), qy = Math.abs(py) - (cy - r);
@@ -150,7 +151,9 @@ function lensMap(w, h, r, bez, k) {
     }
     const o = (j * W + i) * 4; d[o] = 128 + dx * 127; d[o + 1] = 128 + dy * 127; d[o + 2] = 128; d[o + 3] = 255;
   }
-  x.putImageData(im, 0, 0); return lgMaps[key] = c.toDataURL();
+  x.putImageData(im, 0, 0); const url = c.toDataURL(); lgMaps.set(key, url);
+  while (lgMaps.size > 40) lgMaps.delete(lgMaps.keys().next().value);
+  return url;
 }
 function lgBuild(el) {
   const w = el.offsetWidth, h = el.offsetHeight; if (w < 8 || h < 8) return;
@@ -168,12 +171,17 @@ function lgBuild(el) {
   const on = () => { el.style.setProperty('--lgf', `url(#${f.id})`); el.classList.add('lqf'); };
   if (el.classList.contains('lqf')) on(); else { const im = new Image(); im.src = map; (im.decode ? im.decode() : Promise.resolve()).then(() => requestAnimationFrame(on), on); }
 }
-const lgRO = 'ResizeObserver' in window ? new ResizeObserver(es => es.forEach(e => lgBuild(e.target))) : null;
-function lgAttach(el) { if (!LGOK || el._lgOn) return; el._lgOn = 1; lgBuild(el); lgRO && lgRO.observe(el); }
-const LGSEL = '.island.glass,.tools,.tmux,.vpop,.stk,.wback>.win,.field,.toast';
+// пересчёт карты — не на каждый кадр ресайза, а когда размер устоялся (иначе на слабых компах всё встаёт колом)
+const lgLater = el => { clearTimeout(el._lgT); el._lgT = setTimeout(() => { if (el.isConnected && R.classList.contains('lg')) lgBuild(el); }, 160); };
+const lgRO = 'ResizeObserver' in window ? new ResizeObserver(es => es.forEach(e => lgLater(e.target))) : null;
+function lgAttach(el) { if (!LGOK || el._lgOn) return; el._lgOn = 1; if (R.classList.contains('lg')) lgBuild(el); lgRO && lgRO.observe(el); }
+function lgDetach(el) { if (!el._lgOn) return; el._lgOn = 0; clearTimeout(el._lgT); lgRO && lgRO.unobserve(el); if (el._lgF) { el._lgF.remove(); el._lgF = null; } el._lgSig = ''; }
+const LGSEL = '.island.glass,.tools,.vpop,.stk,.wback>.win,.field,.toast';
 export const lgScan = (root = document) => $$(LGSEL, root).forEach(lgAttach);
 export function setGlass(m) {
-  R.classList.toggle('lg', LGOK && m === 'liquid');
+  const on = LGOK && m === 'liquid' && !prefs.lite, was = R.classList.contains('lg');
+  R.classList.toggle('lg', on);
+  if (on && !was) $$(LGSEL).forEach(el => { if (el._lgOn) { el._lgSig = ''; lgBuild(el); } });
   $$('.js-glassmode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === m)));
 }
 export function setGA(v = prefs.glassA) { v = +v; R.style.setProperty('--pa', (.92 - v * .0062).toFixed(3)); R.style.setProperty('--la', (.5 - v * .0042).toFixed(3)); }
@@ -183,10 +191,14 @@ $('.js-glassmode').addEventListener('click', e => {
   tmsg('ok', b.dataset.g === 'liquid' ? (LGOK ? 'стекло: жидкое — края преломляют то, что под ними' : 'тут преломление не поддерживается — будет матовое') : 'стекло: только матовое — меньше нагрузка на видюху');
 });
 if (!LGOK) $('.js-glassmode button[data-g="liquid"]').title = 'в этом браузере преломление не поддерживается — будет матовое';
-bus.on('pref', (k, v) => { if (k === 'glassA') setGA(v); });
+bus.on('pref', (k, v) => { if (k === 'glassA') setGA(v); if (k === 'lite') setGlass(prefs.glass || 'liquid'); });
 export function initLayout() {
   setGlass(prefs.glass || 'liquid'); setGA();
   lgScan();
-  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.matches(LGSEL)) lgAttach(n); }))).observe($('.js-toasts'), { childList: true });
+  // тосты приходят и уходят: фильтр стекла убираем вместе с тостом, чтобы не копились
+  new MutationObserver(ms => ms.forEach(m => {
+    m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.matches(LGSEL)) lgAttach(n); });
+    m.removedNodes.forEach(n => { if (n.nodeType === 1) lgDetach(n); });
+  })).observe($('.js-toasts'), { childList: true });
   applyLay();
 }

@@ -2268,7 +2268,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hunty"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "hunty-core",
@@ -2281,11 +2281,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webview2-com",
+ "windows-core",
 ]
 
 [[package]]
 name = "hunty-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2302,9 +2303,10 @@ dependencies = [
 
 [[package]]
 name = "hunty-node"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "futures",
  "hunty-core",
  "include_dir",

@@ -20,6 +20,50 @@ try {
   const m1 = await A.cmd('send', { room: dmA.id, text: 'привет, бро' });
   const got = await B.until(e => e.ev === 'msg' && e.msg.id === m1.id);
   ok(got.msg.text === 'привет, бро', 'личка дошла до B, подпись проверена');
+  // v0.2: ответы, реакции, правка, удаление, «удалить у себя», вложения, хранилище
+  const m2 = await B.cmd('send', { room: dmA.id, text: 'ну привет', reply: m1.id });
+  const g2 = await A.until(e => e.ev === 'msg' && e.msg.id === m2.id);
+  ok(g2.msg.rp && g2.msg.rp.id === m1.id && g2.msg.rp.text === 'привет, бро', 'ответ с цитатой');
+  await B.cmd('react', { room: dmA.id, id: m1.id, e: '🔥' });
+  const rx = await A.until(e => e.ev === 'msg_upd' && e.id === m1.id && e.msg && (e.msg.reacts || []).some(r => r.e === '🔥'));
+  ok(rx.msg.reacts[0].p[0] === sb.me.peer, 'реакция дошла');
+  await B.cmd('react', { room: dmA.id, id: m1.id, e: '🔥' });
+  await A.until(e => e.ev === 'msg_upd' && e.id === m1.id && e.msg && !(e.msg.reacts || []).length);
+  ok(true, 'повторная реакция снимает её');
+  await A.cmd('edit', { room: dmA.id, id: m1.id, text: 'привет, бро!' });
+  const ed = await B.until(e => e.ev === 'msg_upd' && e.id === m1.id && e.msg && e.msg.edited);
+  ok(ed.msg.text === 'привет, бро!', 'правка дошла');
+  await sleep(300);
+  ok((await B.cmd('msgs', { room: dmA.id })).msgs.find(m => m.id === m2.id).rp.text === 'привет, бро!', 'цитата тоже видит правку');
+  let bad = ''; try { await B.cmd('edit', { room: dmA.id, id: m1.id, text: 'взлом' }); } catch (e) { bad = e.message; }
+  ok(bad, 'чужое не редактируется: ' + bad);
+  bad = ''; try { await B.cmd('del', { room: dmA.id, id: m1.id }); } catch (e) { bad = e.message; }
+  ok(bad, 'чужое у всех не удаляется: ' + bad);
+  await A.cmd('del', { room: dmA.id, id: m1.id });
+  await B.until(e => e.ev === 'msg_upd' && e.id === m1.id && e.msg === null);
+  const hB = await B.cmd('msgs', { room: dmA.id });
+  ok(!hB.msgs.some(m => m.id === m1.id) && hB.msgs.find(m => m.id === m2.id).rp.gone, 'удаление у всех; цитата → «сообщение удалено»');
+  await B.cmd('msg_hide', { room: dmA.id, id: m2.id });
+  ok(!(await B.cmd('msgs', { room: dmA.id })).msgs.some(m => m.id === m2.id) && (await A.cmd('msgs', { room: dmA.id })).msgs.some(m => m.id === m2.id), '«удалить у себя» не трогает собеседника');
+  const png = 'data:image/png;base64,' + Buffer.alloc(6000, 7).toString('base64');
+  const im = await A.cmd('send', { room: dmA.id, kind: 'image', text: 'скрин', data: { src: png, name: 'x.png', w: 10, h: 10 } });
+  const gi = await B.until(e => e.ev === 'msg' && e.msg.id === im.id);
+  ok(gi.msg.data.ref && !gi.msg.data.src, 'картинка пришла без base64 в событии (ref)');
+  const md = await B.cmd('media', { room: dmA.id, id: im.id });
+  ok(md.mime === 'image/png' && md.b64 === png.split(',')[1], 'media отдаёт вложение');
+  const st1 = await B.cmd('storage');
+  const sr = st1.rooms.find(r => r.room === dmA.id);
+  ok(sr && sr.bytes > 8000 && sr.media === 1 && st1.total >= sr.bytes, `хранилище: ${sr.bytes} байт, файлов ${sr.media}`);
+  const cl = await B.cmd('room_clear', { room: dmA.id });
+  ok(cl.freed > 8000 && (await B.cmd('msgs', { room: dmA.id })).msgs.length === 0, 'очистка истории освободила ' + cl.freed + ' байт');
+  // ники
+  const n1 = await C.cmd('nick_check', { nick: 'anton' });
+  ok(n1.state === 'nodht', 'nick_check без DHT у незнакомого C: ' + n1.state);
+  ok((await A.cmd('nick_check', { nick: 'anton' })).state === 'mine', 'свой ник — mine');
+  ok((await A.cmd('nick_check', { nick: 'Ж' })).state === 'bad', 'кривой ник — bad');
+  ok((await B.cmd('nick_check', { nick: 'anton' })).state === 'taken', 'ник друга занят');
+  bad = ''; try { await B.cmd('profile_set', { nick: 'anton' }); } catch (e) { bad = e.message; }
+  ok(bad.includes('занят'), 'занятый ник не взять: ' + bad);
   // группа
   await A.cmd('room_create', { name: 'кухня', color: '#ffc66b', members: [sb.me.peer] });
   const rB = await B.until(e => e.ev === 'room' && e.room.kind === 'group' && e.room.name === 'кухня');
@@ -57,6 +101,15 @@ try {
   await A.cmd('room_kick', { room: g, peer: sc.me.peer });
   await C.until(e => e.ev === 'room_removed' && e.room === g, 15000);
   ok(true, 'кик: C убран из хаты');
+  // блок
+  await A.cmd('block', { peer: sb.me.peer });
+  await B.until(e => e.ev === 'friend_removed' && e.peer === sa.me.peer, 15000);
+  ok(!(await A.cmd('state')).friends?.some?.(f => f.peer === sb.me.peer), 'блок: дружба снята у обоих');
+  const blk = await B.cmd('send', { room: dmA.id, text: 'ты меня слышишь?' });
+  await sleep(2000);
+  ok(!A.evs.some(e => (e.ev === 'msg' && e.msg.id === blk.id) || (e.ev === 'msgs' && e.msgs.some(m => m.id === blk.id))), 'сообщения от заблокированного не доходят');
+  const ub = await A.cmd('unblock', { peer: sb.me.peer });
+  ok(!ub.blocked.some(b => b.peer === sb.me.peer), 'разблокировка');
   const net = await A.cmd('net');
   ok(net.online.length >= 1, 'net: онлайн ' + net.online.map(o => o.nick + ':' + o.via + ':' + o.rtt).join(', '));
   console.log('ВСЁ ОК');

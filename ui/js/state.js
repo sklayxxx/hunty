@@ -17,6 +17,7 @@ export const S = {
   msgs: new Map(),        // room → [msg] (загруженное)
   full: new Set(),        // комнаты, где история загружена до начала
   link: true,             // есть связь с ядром
+  blocked: new Map(),     // peer → {peer, nick, ts}: заблокированные
 };
 export const myId = () => (S.me ? S.me.peer : '');
 export const myNick = () => (S.me && S.me.profile ? S.me.profile.nick : '');
@@ -29,7 +30,10 @@ export function load(st) {
   S.voices = (st.voice && st.voice.rooms) || {};
   S.myVoice = (st.voice && st.voice.mine) || null;
   S.nearby = new Map((st.nearby || []).filter(x => x.profile).map(x => [x.peer, x.profile]));
+  setBlocked(st.blocked);
 }
+function setBlocked(list) { S.blocked = new Map((list || []).filter(b => b && b.peer).map(b => [b.peer, b])); }
+export const isBlocked = peer => S.blocked.has(peer);
 
 function member(peer) {
   for (const r of S.rooms.values()) { const m = (r.members || []).find(m => m.peer === peer); if (m && m.nick) return m; }
@@ -40,6 +44,7 @@ export function profileOf(peer) {
   const f = S.friends.get(peer); if (f && f.profile && f.profile.nick) return f.profile;
   const n = S.nearby.get(peer); if (n) return n;
   const m = member(peer); if (m) return { nick: m.nick, ava: m.ava };
+  const b = S.blocked.get(peer); if (b && b.nick) return { nick: b.nick };
   return (f && f.profile) || {};
 }
 export const nickOf = peer => profileOf(peer).nick || short(peer);
@@ -97,7 +102,20 @@ export function wire() {
     const add = addMsgs(v.room, v.msgs || []);
     bus.emit('msgs', v.room, add);
   });
-  on('room', v => { if (!v.room) return; const old = S.rooms.get(v.room.id); S.rooms.set(v.room.id, v.room); bus.emit('room', v.room, old, v); });
+  on('room', v => {
+    if (!v.room) return; const old = S.rooms.get(v.room.id); S.rooms.set(v.room.id, v.room);
+    if (v.cleared) { S.msgs.delete(v.room.id); S.full.delete(v.room.id); }
+    bus.emit('room', v.room, old, v);
+  });
+  // правка, реакция, удаление: сообщение целиком (или null — его больше нет)
+  on('msg_upd', v => {
+    const arr = S.msgs.get(v.room);
+    if (arr) { const i = arr.findIndex(m => m.id === v.id); if (i >= 0) { if (v.msg) arr[i] = v.msg; else arr.splice(i, 1); } }
+    const r = S.rooms.get(v.room); if (r && r.last && r.last.id === v.id && v.msg) r.last = v.msg;
+    bus.emit('msg_upd', v.room, v.id, v.msg || null);
+  });
+  on('blocked', v => { setBlocked(v.blocked); bus.emit('blocked'); });
+  on('nick_status', v => bus.emit('nick_status', v));
   on('room_removed', v => { const r = S.rooms.get(v.room); S.rooms.delete(v.room); S.msgs.delete(v.room); bus.emit('room_removed', v.room, v.why, r); });
   on('friend', v => { if (!v.friend) return; const old = S.friends.get(v.friend.peer); S.friends.set(v.friend.peer, v.friend); S.nearby.delete(v.friend.peer); bus.emit('friend', v.friend, old, v); });
   on('friend_removed', v => { const f = S.friends.get(v.peer); S.friends.delete(v.peer); bus.emit('friend_removed', v.peer, f); });

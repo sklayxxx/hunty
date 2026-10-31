@@ -3,7 +3,9 @@ import { $, $$, esc, ic, short, plural, bus } from './core.js';
 import { api } from './api.js';
 import { S, myId, nickOf, avaOf, isOnline, roomName } from './state.js';
 import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, segSet, segGet, winOpen } from './ui.js';
-import { openChat, renderLists, header, tileHTML } from './chat.js';
+import { openChat, renderLists, header, tileHTML, leaveGroup } from './chat.js';
+import { onCtx, ask } from './menu.js';
+import { personItems } from './people.js';
 import qrcode from './vendor/qrcode.js';
 
 /* ---------- создать ---------- */
@@ -102,21 +104,28 @@ $('.js-gscol', sw).addEventListener('click', e => { const b = e.target.closest('
 $('.js-gsvoice', sw).addEventListener('change', e => upd({ voice: e.target.checked }, e.target.checked ? 'голосовой канал включён' : 'голосовой канал выключен'));
 $('.js-gsinv', sw).addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (b && !b.disabled) upd({ invite: b.dataset.v }); });
 $('.js-gsmute', sw).addEventListener('change', e => upd({ muted: e.target.checked }, e.target.checked ? 'группа без звука' : 'уведомления группы включены'));
-$('.js-gsleave', sw).addEventListener('click', async e => {
-  const b = e.currentTarget;
-  if (!b.dataset.sure) { b.dataset.sure = 1; b.innerHTML = ic('log-out') + 'Точно выйти?'; setTimeout(() => { delete b.dataset.sure; b.innerHTML = ic('log-out') + 'Выйти'; }, 4000); return; }
-  try { const r = S.rooms.get(gsRoom); try { await api('send', { room: gsRoom, kind: 'sys', text: 'leave' }); } catch (_) {} await api('room_leave', { room: gsRoom }); closeW(true); tmsg('ok', `ты вышел из «${r ? r.name : 'группы'}»`); }
-  catch (err) { fail(err); }
+$('.js-gsleave', sw).addEventListener('click', () => leaveGroup(gsRoom));
+bus.on('room_removed', room => { if (winOpen() === 'gset' && room === gsRoom) closeW(true); });
+async function kick(peer) {
+  if (!(await ask({ title: `Выгнать ${nickOf(peer)} из группы?`, text: 'Инвайт-ссылка сбросится, чтобы он не вернулся по старой.', ok: 'Выгнать', danger: true, icon: 'ban' }))) return;
+  try { await api('send', { room: gsRoom, kind: 'sys', text: 'kick:' + peer }).catch(() => {}); const j = await api('room_kick', { room: gsRoom, peer }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', `${nickOf(peer)} выгнан · старый инвайт больше не работает`); } catch (err) { fail(err); }
+}
+async function setAdmin(peer, on) { try { const j = await api('room_admin', { room: gsRoom, peer, on }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', on ? `${nickOf(peer)} теперь админ` : `${nickOf(peer)} больше не админ`); } catch (err) { fail(err); } }
+// правый клик по участнику: меню человека + админка
+onCtx('.js-gmembers .mrow', el => {
+  const b = el.querySelector('[data-prof]'), p = b ? b.dataset.prof : myId();
+  const r = S.rooms.get(gsRoom), m = ((r && r.members) || []).find(x => x.peer === p);
+  const extra = r && r.admin && m && !m.me && m.role !== 'owner' ? [
+    { icon: 'crown', label: m.role === 'admin' ? 'Снять админа' : 'Сделать админом', fn: () => setAdmin(p, m.role !== 'admin') },
+    { icon: 'ban', label: 'Выгнать из группы', danger: true, fn: () => kick(p) },
+  ] : [];
+  return personItems(p, { extra, sub: m ? (m.role === 'owner' ? 'создатель группы' : m.role === 'admin' ? 'админ группы' : '') : '' });
 });
 sw.addEventListener('click', async e => {
   const k = e.target.closest('[data-gkick]');
-  if (k) {
-    if (!k.dataset.sure) { k.dataset.sure = 1; k.classList.add('warn'); k.title = 'Точно выгнать?'; tmsg('warn', `ещё раз — и ${nickOf(k.dataset.gkick)} вылетит из группы (инвайт сбросится)`); return; }
-    try { await api('send', { room: gsRoom, kind: 'sys', text: 'kick:' + k.dataset.gkick }).catch(() => {}); const j = await api('room_kick', { room: gsRoom, peer: k.dataset.gkick }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', `${nickOf(k.dataset.gkick)} выгнан · старый инвайт больше не работает`); } catch (err) { fail(err); }
-    return;
-  }
+  if (k) { kick(k.dataset.gkick); return; }
   const a = e.target.closest('[data-gadm]');
-  if (a) { try { const j = await api('room_admin', { room: gsRoom, peer: a.dataset.gadm, on: a.dataset.on === '1' }); S.rooms.set(j.id, j); renderGset(); } catch (err) { fail(err); } return; }
+  if (a) { setAdmin(a.dataset.gadm, a.dataset.on === '1'); return; }
   if (e.target.closest('.js-ginvadd')) {
     const r = S.rooms.get(gsRoom), have = new Set((r.members || []).map(m => m.peer));
     const fr = [...S.friends.values()].filter(f => f.state === 'friend' && !have.has(f.peer));

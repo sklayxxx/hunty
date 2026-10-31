@@ -13,9 +13,11 @@
 
 ## Команды ядра
 state net onboard profile_set friend_code friend_add friend_accept friend_decline friend_remove nick_find nearby dm_open
-room_create room_add room_invite room_join room_leave room_update room_kick room_admin msgs send read ev rtc
+room_create room_add room_invite room_join room_leave room_update room_kick room_admin msgs send(reply) react edit del msg_hide room_clear media read ev rtc
+storage nick_check block unblock log_ui
 voice_join voice_state voice_leave config_set backup_export backup_import quit
-События: msg msgs room room_removed friend friend_removed presence profile ev voice rtc net log nearby me join_failed found
+События: msg msg_upd msgs room room_removed friend friend_removed presence profile ev voice rtc net log nearby me join_failed found nick_status blocked
+WS (браузерный режим): запрос `{cmd, rid, ...}` → ответ `{rid, ok|err}`, события без rid.
 
 ## Статус
 - [x] ядро + e2e (tests/core.mjs, tests/dht.mjs)
@@ -24,6 +26,7 @@ voice_join voice_state voice_leave config_set backup_export backup_import quit
 - [x] src-tauri: `cargo check --target x86_64-pc-windows-gnu` проходит
 - [x] браузерный режим для Linux (hunty-node с вшитым UI), e2e: регистрация/выключение/перезапуск из UI, Chromium ⇄ Firefox (голос, вебка, демка — `node tests/ui.mjs voice dm ff`; тест проверяет, что звук реально идёт в обе стороны).
   Мик: пока AudioContext спит (Firefox до клика / без аудиовыхода), трек уходит напрямую, без гейна, потом подменяется на обработанный
+- [x] 0.2.0: ответы/реакции/правка/удаление/разметка, контекстные меню, громкость 0–200% и локальный мьют, проверка мика, шумодав, блокировка, хранилище, журнал вместо tmux-строки, уникальные ники; e2e: tests/core.mjs + tests/v2.mjs
 - [ ] проверка на живом Windows (WebView2: getDisplayMedia, разрешения, NSIS)
 - [ ] проверка на живом Linux-десктопе (Wayland: показ экрана через портал, .desktop/автозапуск в GNOME/KDE)
 - [ ] macOS: собрать и проверить браузерный режим (в CI пока нет)

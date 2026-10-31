@@ -1,5 +1,7 @@
-// Точка входа: связь с ядром, загрузочный экран, регистрация, первый рендер, мелкие индикаторы и пасхалки
+// Точка входа: связь с ядром, загрузочный экран, регистрация, первый рендер, мелкие индикаторы,
+// сторож тормозов и ошибок (→ журнал и лог ядра), пасхалки
 import { $, $$, R, esc, ic, prefs, setPref, bus, reduce, sleep, short, plural } from './core.js';
+import './menu.js';
 import * as API from './api.js';
 import { S, load, wire, myId, myNick, nickOf } from './state.js';
 import { app, tmsg, tone, TONES, toast, closeToast, openW, closeW, fit, glitch, winOpen } from './ui.js';
@@ -78,10 +80,10 @@ function render() {
   renderMe(); renderLists(); renderWs(); setTab('chats');
   const last = prefs.lastChat && S.rooms.has(prefs.lastChat) ? prefs.lastChat : (sorted()[0] || {}).id;
   if (last) openChat(last); else showEmpty();
-  layout(); ping(); title(); host(); refreshCode().catch(() => {});
+  layout(); ping(); title(); refreshCode().catch(() => {});
 }
 
-/* ---------- мелочи в шапке и tmux ---------- */
+/* ---------- мелочи в шапке ---------- */
 function ping() {
   const el = $('.js-ping'), d = $('.js-p2pd'), box = $('.js-p2p');
   const rt = [...S.online.entries()].filter(([p]) => S.friends.has(p)).map(([, o]) => o.rtt).filter(x => x != null);
@@ -99,13 +101,43 @@ function title() {
   document.title = n ? `(${n}) Hunty` : 'Hunty';
 }
 ['msg', 'msgs', 'open', 'room', 'room_removed'].forEach(e => bus.on(e, () => setTimeout(title, 350)));
-function host() { $('.js-host').textContent = '@' + (myNick() || 'hunty'); }
-bus.on('me', host);
 // новый чат (друг принял заявку, позвали в группу) — открываю, если сейчас ничего не открыто
 bus.on('room', (r, old) => { if (!old && !S.cur && r && !r.pending) openChat(r.id); });
 
-/* логи ядра → строка tmux (не перебивают свежие сообщения) */
+/* логи ядра → журнал (Настройки → Сеть), всплывашками не мешают */
 bus.on('log', (k, text) => tmsg(k === 'err' ? 'err' : k === 'warn' ? 'warn' : 'ok', text, true));
+
+/* ---------- внешний вид: живой фон, лёгкий режим; свёрнуто — анимации на паузе ---------- */
+function look() { R.classList.toggle('bglive', !!prefs.liveBg && !reduce && !prefs.lite); R.classList.toggle('lite', !!prefs.lite); }
+look();
+bus.on('pref', k => { if (k === 'liveBg' || k === 'lite') look(); });
+const vis = () => R.classList.toggle('hid', document.hidden);
+document.addEventListener('visibilitychange', vis); vis();
+
+/* ---------- сторож: ошибки и долгие подвисания → журнал и лог ядра (hunty.log), чтобы потом разобраться ---------- */
+let logN = 0, logT0 = 0;
+function uiLog(k, text) {
+  tmsg('err', text, true);
+  const now = Date.now(); if (now - logT0 > 60000) { logT0 = now; logN = 0; }
+  if (++logN <= 20) API.api('log_ui', { k, text: String(text).slice(0, 2000) }).catch(() => {});
+}
+addEventListener('error', e => { if (e && e.message) uiLog('error', `${e.message} @ ${(e.filename || '').split('/').pop()}:${e.lineno || 0}`); });
+addEventListener('unhandledrejection', e => { const r = e.reason; console.warn('unhandled', r); uiLog('promise', (r && (r.stack || r.message)) || String(r)); });
+let slow = [], slowAsked = false;
+try {
+  new PerformanceObserver(list => {
+    for (const t of list.getEntries()) {
+      if (t.duration < 200) continue;
+      if (t.duration >= 1000) uiLog('longtask', `интерфейс подвис на ${Math.round(t.duration)} мс`);
+      const now = performance.now(); slow = slow.filter(x => now - x < 60000); slow.push(now);
+      if (slow.length >= 6 && !slowAsked && !prefs.lite && !document.hidden && performance.now() > 20000) {
+        slowAsked = true;
+        toast({ icon: 'zap', title: 'Hunty подтормаживает', sub: 'включи лёгкий режим — без стекла, размытия и анимаций. Вернуть можно в Настройки → Внешний вид', dur: 20000,
+          actions: [{ label: 'Включить', cls: 'cbtn', fn: () => { setPref('lite', true); tmsg('ok', 'лёгкий режим включён'); } }, { label: 'Не надо', cls: 'gbtn' }] });
+      }
+    }
+  }).observe({ type: 'longtask', buffered: false });
+} catch (_) {}
 
 /* ---------- связь с ядром ---------- */
 let lost = null, lostT = 0;
@@ -130,7 +162,6 @@ if (!API.inTauri && 'Notification' in window && Notification.permission === 'def
   addEventListener('pointerdown', ask, true);
 }
 bus.on('restoring', () => { const b = document.createElement('div'); b.className = 'boot'; b.innerHTML = `<div class="brand">${($('.js-logo svg') || {}).outerHTML || ''}Hunty</div><pre>${OK}бэкап принят\n${OK}перезапускаю ядро с твоим ключом…</pre>`; document.body.appendChild(b); });
-addEventListener('unhandledrejection', e => console.warn('unhandled', e.reason));
 
 /* ---------- AFK: мой голос — тоже активность ---------- */
 bus.on('talk', p => { if (p === myId() && steveAPI) steveAPI.wake(); });

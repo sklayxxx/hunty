@@ -39,6 +39,8 @@
     </div>
   </header>
 
+  <div class="sharebar js-sharebar" role="status" hidden><span class="sb-dot" aria-hidden="true"></span><span class="sb-t"><b>Ты показываешь экран</b><small class="js-sbsub">видят все в голосе</small></span><button class="sb-stop js-sbstop" type="button" title="Остановить показ · Ctrl+Shift+S">{{I:monitor-off}}Остановить</button></div>
+
   <main class="tiles">
     <section class="pane glass list" aria-label="Чаты и друзья">
       <header class="ph" role="tablist">
@@ -79,18 +81,19 @@
           </div>
         </div>
       </div>
+      <div class="cbar js-cbar" hidden></div>
       <form class="composer js-form" autocomplete="off">
         <canvas class="sparks js-sparks" aria-hidden="true"></canvas>
         <span class="mechip" title="Твой ник"><img class="ava js-meava" alt=""><b class="js-menick">…</b></span>
         <div class="field">
           <button class="ib sm js-attach" type="button" title="Файл или картинка" aria-label="Прикрепить">{{I:paperclip}}</button>
-          <input class="js-input" placeholder="Написать…" maxlength="4000" aria-label="Сообщение" spellcheck="true">
+          <textarea class="js-input" rows="1" placeholder="Написать…" maxlength="4000" aria-label="Сообщение" spellcheck="true"></textarea>
           <button class="ib sm js-emo" type="button" title="Стикеры" aria-label="Стикеры">{{I:sticker}}</button>
         </div>
         <button class="send" type="submit" title="Отправить (Enter)" aria-label="Отправить">{{I:arrow-up}}</button>
         <input class="js-file" type="file" multiple hidden>
       </form>
-      <div class="phint"><kbd>Enter</kbd> отправить<span class="dot"></span><kbd>@ник</kbd> позвать<span class="ph-x"><span class="dot"></span><kbd>Ctrl+V</kbd> картинка</span></div>
+      <div class="phint"><kbd>Enter</kbd> отправить<span class="dot"></span><kbd>Shift+Enter</kbd> новая строка<span class="ph-x"><span class="dot"></span><kbd>↑</kbd> изменить своё<span class="dot"></span><kbd>**жирный**</kbd><kbd>||спойлер||</kbd></span></div>
       <div class="stk glass js-stk" role="dialog" aria-label="Стикеры" hidden>
         <div class="stkh"><b>Стикеры</b><small>клик — отправить в чат</small></div>
         <div class="stkg js-stkg"></div>
@@ -154,24 +157,18 @@
       <div class="ctrl">
         <button class="cb ico js-mic" aria-pressed="true" title="Микрофон · Ctrl+M" aria-label="Микрофон">{{I:mic}}</button>
         <button class="cb ico js-deaf" aria-pressed="true" title="Звук · Ctrl+D" aria-label="Звук">{{I:headphones}}</button>
-        <button class="cb ico js-cam" aria-pressed="false" title="Вебка" aria-label="Вебка">{{I:video}}</button>
-        <button class="cb js-share" title="Запустить демку · Ctrl+Shift+S">{{I:monitor-up}}<span>Демка</span></button>
+        <button class="cb ico js-cam" aria-pressed="false" title="Вебка — видят все в голосе" aria-label="Вебка">{{I:video}}</button>
+        <button class="cb js-share" title="Показать экран друзьям в голосе · Ctrl+Shift+S">{{I:monitor-up}}<span>Экран</span></button>
         <button class="cb js-btns" title="Кнопки и звуки · F1–F6">{{I:zap}}Кнопки</button>
-        <button class="cb leave js-leave" title="Выйти из голоса">{{I:log-out}}<span>Выйти</span></button>
+        <button class="cb leave js-leave" title="Выйти из голоса · чат останется">{{I:log-out}}<span>Выйти</span></button>
       </div>
     </section>
   </main>
 
-  <footer class="tmux">
-    <span class="sess">{{I:radio-tower}}hunty</span>
-    <span class="js-twins"></span>
-    <span class="msg js-tmsg" role="status"><span class="st ok"></span><span class="mt">запуск…</span></span>
-    <span class="host js-host">hunty</span>
-    <span class="date js-date"></span>
-  </footer>
 </div>
 
 <div class="toasts js-toasts" aria-live="polite"></div>
+
 
 <div class="mini glass js-mini" role="region" aria-label="Звонок" hidden>
   <div class="mi-h js-mdrag" title="Перетащи куда удобно">
@@ -203,6 +200,7 @@
         <button role="tab" data-tab="notif">{{I:bell}}Уведомления</button>
         <button role="tab" data-tab="keys">{{I:keyboard}}Хоткеи</button>
         <button role="tab" data-tab="priv">{{I:shield}}Приватность</button>
+        <button role="tab" data-tab="storage">{{I:hard-drive}}Хранилище</button>
         <button role="tab" data-tab="net">{{I:wifi}}Сеть</button>
         <button role="tab" data-tab="about">{{I:info}}О Hunty</button>
         <span class="eggs js-eggs">найдено пасхалок: 0 из ?</span>
@@ -229,12 +227,33 @@
           <div class="row"><div class="lab"><b>Наушники / колонки</b></div><span class="selw"><select class="inp js-dev" data-pref="outId" data-kind="audiooutput" aria-label="Вывод звука"></select></span></div>
           <div class="row"><div class="lab"><b>Громкость мика</b></div><div class="rgw"><input type="range" class="rg" min="0" max="200" data-pref="micVol" aria-label="Громкость мика"><span class="rgv">100%</span></div></div>
           <div class="row"><div class="lab"><b>Громкость звука</b></div><div class="rgw"><input type="range" class="rg" min="0" max="100" data-pref="outVol" aria-label="Громкость звука"><span class="rgv">100%</span></div></div>
+          <div class="mtest js-mtest">
+            <div class="mt-h"><b>Проверка мика</b><small class="js-mtst">нажми «Проверить» и скажи что-нибудь — полоска покажет, как тебя слышно</small></div>
+            <div class="mt-meter js-mtmeter" title="Громкость мика · белая черта — порог чувствительности"><i class="mt-fill js-mtfill"></i><i class="mt-thr js-mtthr" hidden></i></div>
+            <div class="btnrow">
+              <button class="cbtn sm js-mictest" type="button">{{I:mic}}Проверить</button>
+              <button class="gbtn sm js-loop" type="button" aria-pressed="false" title="Мик сразу в наушники — как тебя слышат друзья">{{I:ear}}Слышать себя</button>
+              <button class="gbtn sm js-rec" type="button" title="Записать 5 секунд и сразу прослушать">{{I:circle-dot}}Запись 5 сек</button>
+            </div>
+          </div>
+          <h3>Чувствительность</h3>
           <div class="row"><div class="lab"><b>Режим мика</b><small>рация — говоришь, пока держишь клавишу V (когда окно Hunty активно)</small></div><div class="seg" data-pref="ptt"><button data-v="0">Голосом</button><button data-v="1">Рация · V</button></div></div>
+          <div class="row"><div class="lab"><b>Порог голоса</b><small>тише порога — в звонок идёт тишина: не слышно клаву и фон между фразами</small></div><div class="seg" data-pref="gate"><button data-v="auto">Авто</button><button data-v="manual">Вручную</button><button data-v="off">Выкл</button></div></div>
+          <div class="row js-gaterow"><div class="lab"><b>Порог</b><small>двигай, пока фон в тишине не перестанет доставать до черты</small></div><div class="rgw"><input type="range" class="rg" min="-80" max="-10" step="1" data-pref="gateDb" data-unit=" дБ" aria-label="Порог чувствительности"><span class="rgv">-50 дБ</span></div></div>
+          <h3>Обработка</h3>
           <div class="row"><div class="lab"><b>Шумодав</b><small>режет клаву, кулер и собаку</small></div><input class="tg" type="checkbox" data-pref="ns" aria-label="Шумодав"></div>
           <div class="row"><div class="lab"><b>Эхоподавление</b></div><input class="tg" type="checkbox" data-pref="ec" aria-label="Эхоподавление"></div>
           <div class="row"><div class="lab"><b>Автогромкость мика</b><small>тихих подтягивает, орущих прижимает</small></div><input class="tg" type="checkbox" data-pref="agc" aria-label="Автогромкость"></div>
           <div class="row"><div class="lab"><b>Качество голоса</b><small>кодек Opus</small></div><div class="seg" data-pref="bitrate"><button data-v="32">32 кбит/с</button><button data-v="64">64 кбит/с</button><button data-v="128">128 кбит/с</button></div></div>
-          <div class="row"><div class="lab"><b>Проверка мика</b><small>скажи что-нибудь</small></div><div class="mictest"><button class="gbtn sm js-mictest">Проверить</button><span class="vu js-micvu"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div></div>
+          <div class="tips">
+            <b>{{I:info}}Друзья слышат эхо или себя?</b>
+            <ul>
+              <li>Звук из колонок попадает обратно в мик — надень наушники или убавь колонки.</li>
+              <li>Держи включённым «Эхоподавление» (выше).</li>
+              <li>Windows: Параметры звука → мик → Свойства → «Прослушать» — сними галку «Прослушивать с данного устройства».</li>
+              <li>Показываешь экран со звуком — Hunty не шлёт друзьям их же голоса, но звук игры из колонок мик всё равно услышит.</li>
+            </ul>
+          </div>
         </div>
         <div class="spage" data-page="video">
           <div class="camv js-camv"><video class="js-camprev" autoplay playsinline muted></video><span class="camtag js-camtag">Превью выключено</span></div>
@@ -257,6 +276,9 @@
           <div class="row"><div class="lab"><b>Прозрачность стекла</b><small>сколько фона видно сквозь панели</small></div><div class="rgw"><input type="range" class="rg js-glassa" min="0" max="100" data-pref="glassA" aria-label="Прозрачность"><span class="rgv">60%</span></div></div>
           <div class="row"><div class="lab"><b>Масштаб</b></div><div class="rgw"><input type="range" class="rg" min="80" max="130" step="5" data-pref="scale" aria-label="Масштаб"><span class="rgv">100%</span></div></div>
           <div class="row"><div class="lab"><b>Загрузочный экран</b><small>короткий лог при запуске</small></div><input class="tg" type="checkbox" data-pref="boot" aria-label="Загрузочный экран"></div>
+          <h3>Скорость</h3>
+          <div class="row"><div class="lab"><b>Живой фон</b><small>пятна на фоне медленно плавают · грузит видеокарту</small></div><input class="tg" type="checkbox" data-pref="liveBg" aria-label="Живой фон"></div>
+          <div class="row"><div class="lab"><b>Лёгкий режим</b><small>без стекла, размытия и анимаций — для слабых компов и ноутов на батарее</small></div><input class="tg" type="checkbox" data-pref="lite" aria-label="Лёгкий режим"></div>
           <h3>AFK-мобы</h3>
           <div class="row"><div class="lab"><b>Кто приходит</b><small>Стив носит землю, житель — руду, слайм — слизь…</small></div><div class="seg js-afkwho"><button data-w="queue">По очереди</button><button data-w="random">Случайно</button><button data-w="off">Никто</button></div></div>
           <div class="row"><div class="lab"><b>Очередь</b><small>подсвечен тот, кто придёт следующим · клик — пусть придёт он</small></div><div class="afkq js-afkq"></div></div>
@@ -291,6 +313,15 @@
           <div class="row"><div class="lab"><b>Писать в лс могут</b><small>только друзья — так устроено</small></div><span class="role adm">друзья</span></div>
           <div class="row"><div class="lab"><b>Шифрование</b><small>сообщения и сигналинг — Noise, голос и демка — DTLS-SRTP</small></div><span class="role adm">End-to-end · всегда</span></div>
           <div class="row"><div class="lab"><b>Подписи</b><small>каждое сообщение подписано ключом автора — подделать нельзя</small></div><span class="role adm">Ed25519</span></div>
+          <div class="sec">Заблокированные <span class="js-bcount"></span></div>
+          <div class="blist js-blist"></div>
+          <p class="lead">Заблокированный не может писать тебе в лс, звать в звонок и слать заявки, его сообщения в группах скрыты. Он об этом не узнает.</p>
+        </div>
+        <div class="spage" data-page="storage">
+          <div class="stcard"><span class="big js-sttotal">…</span><small class="dim js-stsub">считаю…</small><div class="btnrow"><button class="gbtn sm js-stopen" type="button">{{I:folder-open}}Открыть папку</button><button class="gbtn sm js-strefresh" type="button">{{I:rotate-ccw}}Пересчитать</button></div></div>
+          <div class="sec">По чатам · сначала самые тяжёлые</div>
+          <div class="stlist js-stlist"></div>
+          <p class="lead">Очистка удаляет историю и файлы только у тебя — у друзей всё останется, а старое обратно не докачается.</p>
         </div>
         <div class="spage" data-page="net">
           <div class="netcard js-netcard"><span class="big">Серверов: 0</span><ul class="js-netul"></ul></div>
@@ -301,11 +332,13 @@
           <div class="row"><div class="lab"><b>Проверка связи</b><small class="js-nettest">пинг до друзей в сети</small></div><button class="gbtn sm js-netbtn">Тест</button></div>
           <div class="sec">Мои адреса</div>
           <div class="addrs js-addrs"></div>
+          <div class="sec jsec">Журнал <span class="dim js-jcount"></span><span class="jtools"><button class="gbtn sm js-jcopy" type="button">{{I:copy}}Копировать</button><button class="gbtn sm js-jsave" type="button">{{I:download}}Сохранить</button><button class="gbtn sm js-jclear" type="button">{{I:eraser}}Очистить</button></span></div>
+          <div class="jlist js-jlist" role="log" aria-label="Журнал"></div>
         </div>
         <div class="spage" data-page="about">
           <div class="about">
             <span class="big">{{LOGO}}Hunty</span>
-            <span class="js-ver">v0.1.0 · бесплатно навсегда</span>
+            <span class="js-ver">v0.2.0 · бесплатно навсегда</span>
             <span class="dim">P2P: libp2p (QUIC/TCP, Noise, DHT, relay, hole punching) · голос и демка — WebRTC</span>
             <button class="gbtn sm js-upd">Проверить обновления</button>
             <span class="dim js-updst"></span>
@@ -365,16 +398,17 @@
   </section>
 
   <!-- ============ демка ============ -->
-  <section class="win glass share" data-win="share" role="dialog" aria-modal="true" aria-label="Запустить демку">
-    <header class="wh">{{WI:monitor-up}}<span class="wt">Запустить демку</span><span class="wsub js-sroom">в звонок</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
+  <section class="win glass share" data-win="share" role="dialog" aria-modal="true" aria-label="Показать экран">
+    <header class="wh">{{WI:monitor-up}}<span class="wt">Показать экран</span><span class="wsub js-sroom">в звонок</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
     <div class="wb">
-      <div class="row"><div class="lab"><b>Что показать</b><small>после «Запустить» система спросит, какой экран или окно</small></div><div class="seg js-ssurf"><button data-v="monitor" aria-pressed="true">Экран</button><button data-v="window" aria-pressed="false">Окно</button></div></div>
+      <div class="row"><div class="lab"><b>Что показать</b><small>дальше система спросит, какой экран или окно</small></div><div class="seg js-ssurf"><button data-v="monitor" aria-pressed="true">Экран</button><button data-v="window" aria-pressed="false">Окно</button></div></div>
       <div class="row"><div class="lab"><b>Качество</b></div><div class="seg js-sq"><button data-v="720">720p</button><button data-v="1080">1080p</button><button data-v="1440">1440p</button></div></div>
       <div class="row"><div class="lab"><b>FPS</b></div><div class="seg js-sf"><button data-v="15">15</button><button data-v="30">30</button><button data-v="60">60</button></div></div>
       <div class="row"><div class="lab"><b>Звук с компа</b></div><input class="tg js-saudio" type="checkbox" aria-label="Звук с компа"></div>
       <div class="row"><div class="lab"><b>Друзья могут рисовать и указывать</b></div><input class="tg js-sdraw" type="checkbox" checked aria-label="Рисовать"></div>
+      <p class="lead shint">{{I:info}}<span>После «Показать» Windows откроет своё окно выбора экрана. Не видно — оно спряталось за Hunty: нажми <kbd>Alt+Tab</kbd>. Пока идёт показ, сверху горит красная плашка с кнопкой «Остановить».</span></p>
     </div>
-    <footer class="wf"><span class="note2 js-sinfo">напрямую P2P</span><button class="gbtn js-close">Отмена</button><button class="cbtn js-sstart">{{I:monitor-up}}Запустить</button></footer>
+    <footer class="wf"><span class="note2 js-sinfo">напрямую P2P</span><button class="gbtn js-close">Отмена</button><button class="cbtn js-sstart">{{I:monitor-up}}Показать</button></footer>
   </section>
 
   <!-- ============ профиль ============ -->
@@ -389,7 +423,7 @@
         <button class="gbtn js-pcall">{{I:phone}}Позвонить</button>
         <button class="gbtn js-padd">{{I:user-round-plus}}В друзья</button>
       </div>
-      <div class="row js-pvolr"><div class="lab"><b>Громкость для тебя</b><small>слышишь только ты</small></div><div class="rgw"><input type="range" class="rg js-pvol" min="0" max="100" value="100" aria-label="Громкость"><span class="rgv">100%</span></div></div>
+      <div class="row js-pvolr"><div class="lab"><b>Громкость для тебя</b><small>слышишь только ты</small></div><div class="rgw"><input type="range" class="rg js-pvol" min="0" max="200" step="5" value="100" aria-label="Громкость"><span class="rgv">100%</span></div></div>
       <div class="row"><div class="lab"><b>Заглушить для себя</b></div><input class="tg js-pmute" type="checkbox" aria-label="Заглушить"></div>
       <div class="row js-pask"><div class="lab"><b>Попросить</b><small>придёт запрос — друг сам решит</small></div><div class="btnrow"><button class="gbtn sm js-pcam">{{I:video}}Вебку</button><button class="gbtn sm js-pdemo">{{I:monitor-up}}Демку</button></div></div>
       <div class="sec">Общие группы</div>

@@ -1,10 +1,12 @@
-// Друзья: добавить по нику/коду, заявки, локалка, профиль
+// Друзья: добавить по нику/коду, заявки, локалка, профиль, блок, меню человека по правому клику
 import { $, $$, esc, ic, short, when, prefs, setPref, bus } from './core.js';
 import { api } from './api.js';
-import { S, myId, myNick, nickOf, avaOf, colorOf, isOnline, isFriend, dmOf, voiceIn, roomName, profileOf } from './state.js';
+import { S, myId, myNick, nickOf, avaOf, colorOf, isOnline, isFriend, isBlocked, dmOf, voiceIn, roomName, profileOf } from './state.js';
 import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, notify, winOpen, rgv } from './ui.js';
 import { reqRow, renderLists, openChat, pdHTML } from './chat.js';
 import { mobName } from './mobs.js';
+import { onCtx, ask } from './menu.js';
+import { personItems, setVol, setMute } from './people.js';
 
 const w = $('.win[data-win="friend"]');
 const fres = $('.js-fres', w), fnick = $('.js-fnick', w);
@@ -57,7 +59,7 @@ async function doFind(raw) {
   setTimeout(() => {
     if (finding !== my) return;
     const s = $('.js-fsearching', fres); if (!s) return;
-    s.innerHTML = my.found.size ? `${ic('check')}Нашлось: ${my.found.size}. Ники не уникальны — сверь моба и хвост ID с другом` : `${ic('x')}@${esc(nick)} не нашёлся. Друг должен быть в сети и включить «Находить меня по нику». Надёжнее — код hunty://add/…`;
+    s.innerHTML = my.found.size ? `${ic('check')}Нашлось: ${my.found.size} · сверь моба и хвост ID с другом` : `${ic('x')}@${esc(nick)} не нашёлся. Друг должен быть в сети и включить «Находить меня по нику». Надёжнее — код hunty://add/…`;
     finding = null;
   }, 30000);
 }
@@ -90,16 +92,7 @@ export async function addPeer(peer) {
 document.addEventListener('click', async e => {
   const t = e.target; if (!(t instanceof Element)) return;
   const fr = t.closest('[data-fr]');
-  if (fr) {
-    const p = fr.dataset.u, a = fr.dataset.fr;
-    try {
-      if (a === 'ok') { await api('friend_accept', { peer: p }); tmsg('ok', `${nickOf(p)} теперь в друзьях · личка создана`); tone(TONES.friend); }
-      else if (a === 'no') { await api('friend_decline', { peer: p }); tmsg('ok', 'заявка отклонена'); }
-      else if (a === 'cancel') { await api('friend_remove', { peer: p }); tmsg('ok', 'заявка отменена'); }
-    } catch (err) { fail(err); }
-    renderLists(); if (winOpen() === 'friend') renderReqs();
-    return;
-  }
+  if (fr) { friendAct(fr.dataset.u, fr.dataset.fr); return; }
   const ad = t.closest('[data-add]'); if (ad) { addPeer(ad.dataset.add); return; }
   const dm = t.closest('[data-dm]'); if (dm) { closeW(true); openDM(dm.dataset.dm); return; }
   const pr = t.closest('[data-prof]'); if (pr) { openProfile(pr.dataset.prof); return; }
@@ -120,7 +113,7 @@ function renderProfile() {
   $('.js-pava', pw).src = avaOf(p);
   $('.js-pnick', pw).textContent = pr.nick || short(p); $('.js-pnick', pw).style.color = colorOf(p);
   const vr = Object.keys(S.voices).find(k => voiceIn(k)[p]);
-  $('.js-pst', pw).innerHTML = on ? (vr ? `в голосе · ${esc(roomName(vr))}` : `в сети · ${o && o.via === 'relay' ? 'через ретранслятор' : o && o.via === 'lan' ? 'в локалке' : 'напрямую'}${o && o.rtt != null ? ' · ' + o.rtt + 'ms' : ''}`) : 'не в сети';
+  $('.js-pst', pw).innerHTML = isBlocked(p) ? 'заблокирован' : on ? (vr ? `в голосе · ${esc(roomName(vr))}` : `в сети · ${o && o.via === 'relay' ? 'через ретранслятор' : o && o.via === 'lan' ? 'в локалке' : 'напрямую'}${o && o.rtt != null ? ' · ' + o.rtt + 'ms' : ''}`) : 'не в сети';
   $('.js-pban', pw).style.setProperty('--pc', colorOf(p));
   $('.js-pabout', pw).textContent = pr.line || '';
   const fr = f && f.state === 'friend';
@@ -131,25 +124,67 @@ function renderProfile() {
   $('.js-pmute', pw).checked = !!(prefs.mute || {})[p];
   const groups = [...S.rooms.values()].filter(r => r.kind === 'group' && (r.members || []).some(m => m.peer === p));
   $('.js-pgroups', pw).innerHTML = groups.length ? groups.map(r => `<button class="ci" data-chat="${esc(r.id)}"><span class="avw"><span class="tile" style="--tc:${esc(r.color || '#7ee2b8')}">${esc((r.name || '?')[0].toUpperCase())}</span></span><span class="nm">${esc(r.name)}</span><span class="lm">${(r.members || []).length} участн.</span></button>`).join('') : '<div class="empty">общих групп нет</div>';
-  $('.js-pfoot', pw).innerHTML = `<span class="dim mono" title="${esc(p)}">ID ${esc(short(p))}</span>${f && f.since ? `<span class="dim">в друзьях с ${new Date(f.since).toLocaleDateString('ru-RU')}</span>` : ''}${fr ? `<button class="gbtn sm warn js-punf">${ic('ban')}Удалить из друзей</button>` : ''}`;
+  const bl = isBlocked(p);
+  $('.js-pfoot', pw).innerHTML = `<span class="dim mono" title="${esc(p)}">ID ${esc(short(p))}</span>${f && f.since ? `<span class="dim">в друзьях с ${new Date(f.since).toLocaleDateString('ru-RU')}</span>` : ''}<span class="pf-sp"></span>${fr ? `<button class="gbtn sm warn js-punf">${ic('user-x')}Удалить из друзей</button>` : ''}<button class="gbtn sm ${bl ? '' : 'warn '}js-pblock">${ic(bl ? 'shield-off' : 'ban')}${bl ? 'Разблокировать' : 'Заблокировать'}</button>`;
 }
 OPEN.profile = (_, o) => { if (o.peer) pPeer = o.peer; renderProfile(); };
 $('.js-pmsg', pw).addEventListener('click', () => { closeW(true); openDM(pPeer); });
 $('.js-pcall', pw).addEventListener('click', async () => { closeW(true); await openDM(pPeer); bus.emit('call', dmOf(pPeer)); });
 $('.js-padd', pw).addEventListener('click', () => { addPeer(pPeer); setTimeout(renderProfile, 300); });
-$('.js-pvol', pw).addEventListener('input', e => { const v = Object.assign({}, prefs.vol); v[pPeer] = +e.target.value; setPref('vol', v); bus.emit('peer-vol', pPeer); });
-$('.js-pmute', pw).addEventListener('change', e => { const v = Object.assign({}, prefs.mute); if (e.target.checked) v[pPeer] = 1; else delete v[pPeer]; setPref('mute', v); bus.emit('peer-vol', pPeer); tmsg('ok', e.target.checked ? `${nickOf(pPeer)} заглушён — только для тебя` : `${nickOf(pPeer)} снова слышно`); });
+$('.js-pvol', pw).addEventListener('input', e => setVol(pPeer, +e.target.value));
+$('.js-pmute', pw).addEventListener('change', e => setMute(pPeer, e.target.checked));
 $('.js-pcam', pw).addEventListener('click', () => bus.emit('ask', pPeer, 'cam'));
 $('.js-pdemo', pw).addEventListener('click', () => bus.emit('ask', pPeer, 'share'));
 pw.addEventListener('click', async e => {
-  if (e.target.closest('.js-punf')) {
-    const b = e.target.closest('.js-punf');
-    if (!b.dataset.sure) { b.dataset.sure = 1; b.innerHTML = ic('ban') + 'Точно удалить?'; return; }
-    try { await api('friend_remove', { peer: pPeer }); tmsg('ok', `${nickOf(pPeer)} больше не в друзьях`); closeW(true); renderLists(); } catch (err) { fail(err); }
-  }
+  if (e.target.closest('.js-punf')) { if (await unfriend(pPeer)) closeW(true); return; }
+  if (e.target.closest('.js-pblock')) { await (isBlocked(pPeer) ? unblock(pPeer) : block(pPeer)); if (winOpen() === 'profile') renderProfile(); return; }
   const ci = e.target.closest('[data-chat]'); if (ci) { closeW(true); openChat(ci.dataset.chat, { focus: true }); }
 });
 bus.on('presence', p => { if (winOpen() === 'profile' && p === pPeer) renderProfile(); });
+bus.on('peer-vol', p => { if (winOpen() === 'profile' && p === pPeer) { const rg = $('.js-pvol', pw); if (document.activeElement !== rg) { rg.value = (prefs.vol || {})[p] ?? 100; rgv(rg); } $('.js-pmute', pw).checked = !!(prefs.mute || {})[p]; } });
+bus.on('blocked', () => { if (winOpen() === 'profile') renderProfile(); renderLists(); });
+
+/* ---------- удалить, заблокировать (спрашиваем, потом делаем) ---------- */
+export async function unfriend(p) {
+  if (!(await ask({ title: `Удалить ${nickOf(p)} из друзей?`, text: 'Переписка останется у обоих, но писать в лс и звонить друг другу будет нельзя, пока снова не добавитесь.', ok: 'Удалить', danger: true, icon: 'user-x' }))) return false;
+  try { await api('friend_remove', { peer: p }); tmsg('ok', `${nickOf(p)} больше не в друзьях`); renderLists(); return true; } catch (e) { fail(e); return false; }
+}
+export async function block(p) {
+  if (!(await ask({ title: `Заблокировать ${nickOf(p)}?`, text: 'Не сможет писать тебе в лс, звонить и слать заявки, его сообщения в группах скроются, из друзей он тоже удалится. Он об этом не узнает.', ok: 'Заблокировать', danger: true, icon: 'ban' }))) return false;
+  try { await api('block', { peer: p }); tmsg('ok', `${nickOf(p)} заблокирован · разблокировать — Настройки → Приватность`); return true; } catch (e) { fail(e); return false; }
+}
+export async function unblock(p) {
+  try { await api('unblock', { peer: p }); tmsg('ok', `${nickOf(p)} разблокирован · чтобы снова переписываться, добавьтесь в друзья`); return true; } catch (e) { fail(e); return false; }
+}
+async function friendAct(p, a) {
+  try {
+    if (a === 'ok') { await api('friend_accept', { peer: p }); tmsg('ok', `${nickOf(p)} теперь в друзьях · личка создана`); tone(TONES.friend); }
+    else if (a === 'no') { await api('friend_decline', { peer: p }); tmsg('ok', 'заявка отклонена'); }
+    else if (a === 'cancel') { await api('friend_remove', { peer: p }); tmsg('ok', 'заявка отменена'); }
+  } catch (err) { fail(err); }
+  renderLists(); if (winOpen() === 'friend') renderReqs();
+}
+bus.on('open-profile', p => openProfile(p));
+bus.on('dm', p => { closeW(true); openDM(p); });
+bus.on('dm-call', async p => { closeW(true); await openDM(p); const id = dmOf(p); if (id) bus.emit('call', id); });
+bus.on('friend-add', p => addPeer(p));
+bus.on('friend-accept', p => friendAct(p, 'ok'));
+bus.on('friend-cancel', p => friendAct(p, 'cancel'));
+bus.on('unfriend', p => unfriend(p));
+bus.on('block', p => block(p));
+bus.on('unblock', p => unblock(p));
+
+/* ---------- правый клик по людям ---------- */
+onCtx('[data-prof]', el => el.closest('.js-gmembers') ? null : personItems(el.dataset.prof));
+onCtx('.who[data-u], .mav[data-u]', el => personItems(el.dataset.u));
+// заявки и «рядом»: свои пункты сверху
+const rowPeer = el => { const b = el.querySelector('[data-u],[data-add],[data-dm]'); return b ? b.dataset.u || b.dataset.add || b.dataset.dm : ''; };
+onCtx('.ci.req, .fres-i', el => {
+  const p = rowPeer(el); if (!p || p === myId()) return null;
+  const f = S.friends.get(p), st = f && f.state;
+  const extra = st === 'incoming' ? [{ icon: 'check', label: 'Принять', fn: () => friendAct(p, 'ok') }, { icon: 'x', label: 'Отклонить', fn: () => friendAct(p, 'no') }] : [];
+  return personItems(p, { extra, sub: st === 'incoming' ? 'хочет в друзья' : st === 'outgoing' ? 'заявка отправлена' : '' });
+});
 
 /* ---------- входящие заявки и друзья онлайн ---------- */
 bus.on('friend', (f, old, v) => {

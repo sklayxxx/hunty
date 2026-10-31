@@ -5,7 +5,7 @@ use crate::store::*;
 use crate::util::*;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use libp2p::PeerId;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 pub fn pubkey_of(p: &PeerId) -> Option<libp2p::identity::PublicKey> {
@@ -106,6 +106,7 @@ impl Node {
             pending: false,
             inviter: String::new(),
             inviter_addrs: vec![],
+            clear_ts: 0,
         });
         for (ps, prof) in [(self.me_s.clone(), me), (peer.to_string(), fp)] {
             r.members.entry(ps.clone()).or_insert(Member { peer: ps, nick: prof.nick, ava: prof.ava, role: "member".into(), ts: 1, gone: false });
@@ -182,6 +183,9 @@ impl Node {
                     self.send_hello(peer);
                 }
             }
+            (None, "want") if self.st.blocked.contains_key(&ps) => {
+                tracing::info!("заявка от заблокированного {ps} — молча игнорирую");
+            }
             (None, "want") => {
                 self.st.friends.insert(
                     ps.clone(),
@@ -218,7 +222,7 @@ impl Node {
                 continue;
             }
             let push = rs.rev != room_rev(r) && r.kind == "group";
-            if rs.last > self.st.last_ts(&rs.id) {
+            if rs.last > self.st.last_ts(&rs.id).max(r.clear_ts) {
                 self.sync_from(peer, &rs.id);
             }
             if push {
@@ -256,9 +260,56 @@ impl Node {
 
     pub(crate) fn sync_from(&mut self, peer: PeerId, room: &str) {
         let last = self.st.last_ts(room);
-        let since = last.saturating_sub(10 * 60 * 1000);
-        let have: Vec<String> = self.st.msgs(room).iter().filter(|m| m.ts >= since).map(|m| m.id.clone()).collect();
-        self.send(peer, Req::SyncReq { room: room.to_string(), since: if last == 0 { 0 } else { since }, have }, Pend::Sync(room.to_string()));
+        // после «очистить историю» старое не докачиваю
+        let floor = self.st.rooms.get(room).map(|r| r.clear_ts).unwrap_or(0);
+        let since = if last == 0 { floor } else { last.saturating_sub(10 * 60 * 1000).max(floor) };
+        let have = self.st.have_since(room, since);
+        self.send(peer, Req::SyncReq { room: room.to_string(), since, have }, Pend::Sync(room.to_string()));
+    }
+
+    /// Новые сообщения уже в хранилище — рассказать UI (лёгкие копии, без вложений).
+    /// live: одно сообщение «вживую» (событие msg) или пачка из синхронизации (msgs).
+    pub(crate) fn tell_ui(&mut self, room: &str, added: &[Msg], live: bool) {
+        let mut vis = vec![];
+        let mut upd: Vec<String> = vec![];
+        for m in added {
+            if is_meta(&m.kind) {
+                if let Some(t) = target(m) {
+                    if !upd.iter().any(|x| x == t) {
+                        upd.push(t.to_string());
+                    }
+                }
+            } else if let Some(x) = self.st.get(room, &m.id) {
+                vis.push(self.st.view(x));
+            }
+        }
+        let unread = self.st.unread(room, &self.me_s);
+        if live {
+            for v in vis {
+                self.emit("msg", json!({ "room": room, "msg": v, "unread": unread }));
+            }
+        } else if !vis.is_empty() {
+            self.emit("msgs", json!({ "room": room, "msgs": vis, "unread": unread }));
+        }
+        if !upd.is_empty() {
+            let last = self.st.last_visible(room).and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from));
+            let mut touch_last = false;
+            for t in upd {
+                let v = self.st.get(room, &t).map(|x| self.st.view(x));
+                if v.is_none() || last.as_deref() == Some(t.as_str()) {
+                    touch_last = true;
+                }
+                self.emit("msg_upd", json!({ "room": room, "id": t, "msg": v }));
+            }
+            if touch_last {
+                let v = self.room_json(room);
+                self.emit("room", json!({ "room": v }));
+            }
+        }
+    }
+
+    pub(crate) fn blocked_dm(&self, room: &str, peer: &str) -> bool {
+        self.st.blocked.contains_key(peer) && self.st.rooms.get(room).map(|r| r.kind == "dm").unwrap_or(false)
     }
 
     pub(crate) fn room_wire(&self, id: &str, secret: bool) -> Option<RoomWire> {
@@ -396,6 +447,7 @@ impl Node {
                     pending: false,
                     inviter: String::new(),
                     inviter_addrs: vec![],
+                    clear_ts: 0,
                 };
                 self.st.rooms.insert(id.clone(), r);
                 self.st.save_rooms();
@@ -505,14 +557,16 @@ impl Node {
         if !self.member_ok(&room, &ps) {
             return;
         }
+        if self.blocked_dm(&room, &msg.from) {
+            return;
+        }
         let author_ok = self.st.rooms.get(&room).map(|r| r.members.contains_key(&msg.from)).unwrap_or(false);
         if !author_ok || !verify(&msg) {
             tracing::warn!("отбросил сообщение {} от {}: подпись/автор не сходятся", msg.id, msg.from);
             return;
         }
         if self.st.add_msg(msg.clone()) {
-            let unread = self.st.unread(&room, &self.me_s);
-            self.emit("msg", json!({ "room": room, "msg": msg, "unread": unread }));
+            self.tell_ui(&room, std::slice::from_ref(&msg), true);
             let targets: Vec<PeerId> = self.online_members(&room).into_iter().filter(|p| *p != peer && p.to_string() != msg.from).collect();
             for t in targets {
                 self.send(t, Req::Msg { msg: msg.clone() }, Pend::Other);
@@ -525,9 +579,19 @@ impl Node {
             return Resp::Err { e: "не участник".into() };
         }
         let have: HashSet<String> = have.into_iter().collect();
-        let mut msgs: Vec<Msg> = self.st.msgs(&room).iter().filter(|m| m.ts >= since && !have.contains(&m.id)).take(301).cloned().collect();
-        let more = msgs.len() > 300;
-        msgs.truncate(300);
+        // не больше 300 штук и ~24 МБ за раз: картинки читаю с диска, остальное докачается следующим запросом
+        let mut msgs: Vec<Msg> = vec![];
+        let mut bytes = 0usize;
+        let mut more = false;
+        for m in self.st.msgs(&room).iter().filter(|m| m.ts >= since && !have.contains(&m.id)) {
+            if msgs.len() >= 300 || bytes > 24 << 20 {
+                more = true;
+                break;
+            }
+            let Some(full) = self.st.full(m) else { continue };
+            bytes += m.at.map(|a| a.1 as usize).unwrap_or(300 + m.text.len());
+            msgs.push(full);
+        }
         Resp::Sync { msgs, more }
     }
 
@@ -551,6 +615,7 @@ impl Node {
                 self.update_profile(&peer, profile);
                 Resp::Ok
             }
+            Req::FriendReq { .. } | Req::FriendAccept { .. } if self.st.blocked.contains_key(&ps) => Resp::Err { e: "не принимаю заявки".into() },
             Req::FriendReq { profile } | Req::FriendAccept { profile } => {
                 self.process_hello(peer, profile, "want".into(), vec![], false, None);
                 self.hello_resp(&peer)
@@ -573,6 +638,7 @@ impl Node {
                 Resp::Ok
             }
             Req::SyncReq { room, since, have } => self.on_sync_req(peer, room, since, have),
+            Req::Ev { room, .. } | Req::Rtc { room, .. } | Req::Voice { room, .. } if self.blocked_dm(&room, &ps) => Resp::Ok,
             Req::Ev { room, kind, data } => {
                 if self.member_ok(&room, &ps) {
                     self.emit("ev", json!({ "room": room, "from": ps, "kind": kind, "data": data }));
@@ -621,6 +687,14 @@ impl Node {
                     self.emit("found", json!({ "nick": nick, "peer": ps, "profile": profile, "friend": fr }));
                 }
             }
+            (Pend::Check(nick), Resp::Profile { profile }) => {
+                if profile.nick == nick && peer != self.me {
+                    self.finish_check(&nick, "taken", &ps);
+                } else if let Some(c) = self.checks.get_mut(&nick) {
+                    // у него уже другой ник — запись в DHT просто старая
+                    c.providers.remove(&peer);
+                }
+            }
             (Pend::Whois, Resp::Profile { profile }) => {
                 if !profile.nick.is_empty() && !self.known(&peer) {
                     self.nearby.insert(ps.clone(), profile.clone());
@@ -664,21 +738,25 @@ impl Node {
                     self.st.rooms.get(&room).map(|r| r.members.keys().map(|k| (k.clone(), true)).collect()).unwrap_or_default();
                 let mut new = vec![];
                 let mut max_ts = 0;
-                for m in msgs {
+                for mut m in msgs {
                     max_ts = max_ts.max(m.ts);
-                    if m.room != room || !authors.contains_key(&m.from) || !verify(&m) {
+                    if m.room != room || !authors.contains_key(&m.from) || self.blocked_dm(&room, &m.from) || !verify(&m) {
                         continue;
                     }
+                    m.at = None;
                     if self.st.add_msg(m.clone()) {
+                        // в списке для UI вложение не нужно — tell_ui возьмёт лёгкую копию из хранилища
+                        if let Value::Object(o) = &mut m.data {
+                            o.remove("src");
+                        }
                         new.push(m);
                     }
                 }
                 if !new.is_empty() {
-                    let unread = self.st.unread(&room, &self.me_s);
-                    self.emit("msgs", json!({ "room": room, "msgs": new, "unread": unread }));
+                    self.tell_ui(&room, &new, false);
                 }
-                if more {
-                    let have: Vec<String> = self.st.msgs(&room).iter().filter(|m| m.ts >= max_ts).map(|m| m.id.clone()).collect();
+                if more && max_ts > 0 {
+                    let have = self.st.have_since(&room, max_ts);
                     self.send(peer, Req::SyncReq { room: room.clone(), since: max_ts, have }, Pend::Sync(room));
                 }
             }

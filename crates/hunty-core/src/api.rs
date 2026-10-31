@@ -57,13 +57,12 @@ impl Node {
                 })
             })
             .collect();
-        let last = self.st.msgs(id).last().cloned();
         json!({
             "id": r.id, "kind": r.kind, "name": r.name, "color": r.color, "owner": r.owner,
             "invite": r.invite, "voice": r.voice, "muted": r.muted, "pending": r.pending,
             "created": r.created, "members": members, "unread": self.st.unread(id, &self.me_s),
-            "last": last, "read_ts": r.read_ts, "admin": r.is_admin(&self.me_s),
-            "count": self.st.msgs(id).len(),
+            "last": self.st.last_visible(id), "read_ts": r.read_ts, "admin": r.is_admin(&self.me_s),
+            "count": self.st.count(id), "clear_ts": r.clear_ts,
         })
     }
 
@@ -91,7 +90,12 @@ impl Node {
             "ice": self.st.config.ice,
             "config": self.st.config,
             "net": self.net_json(),
+            "blocked": self.blocked_json(),
         })
+    }
+
+    pub(crate) fn blocked_json(&self) -> Value {
+        json!(self.st.blocked.iter().map(|(p, b)| json!({ "peer": p, "nick": b.nick, "ts": b.ts })).collect::<Vec<_>>())
     }
 
     pub(crate) fn sign(&self, mut m: Msg) -> Msg {
@@ -118,6 +122,7 @@ impl Node {
             data,
             reply: reply.to_string(),
             sig: String::new(),
+            at: None,
         });
         self.st.add_msg(m.clone());
         if let Some(r) = self.st.rooms.get_mut(room) {
@@ -129,14 +134,39 @@ impl Node {
 
     pub(crate) fn post_sys(&mut self, room: &str, what: &str) -> Result<Msg, String> {
         let m = self.post(room, "sys", what, Value::Null, "")?;
-        self.emit("msg", json!({ "room": room, "msg": m, "unread": 0 }));
+        let v = self.st.view(&m);
+        self.emit("msg", json!({ "room": room, "msg": v, "unread": 0 }));
         Ok(m)
+    }
+
+    fn reacted(&self, room: &str, id: &str, e: &str) -> bool {
+        self.st.reacted(room, id, &self.me_s, e)
+    }
+
+    /// Своё сообщение для UI (лёгкая копия, с цитатой).
+    fn my_view(&self, m: &Msg) -> Value {
+        self.st.get(&m.room, &m.id).map(|x| self.st.view(x)).unwrap_or_else(|| self.st.view(m))
+    }
+
+    /// Реакция / правка / удаление у всех — обычное подписанное сообщение со ссылкой на цель.
+    fn post_meta(&mut self, room: &str, kind: &str, text: &str, data: Value) -> R {
+        let m = self.post(room, kind, text, data, "")?;
+        self.tell_ui(room, std::slice::from_ref(&m), true);
+        Ok(json!({ "ok": true, "id": m.id }))
     }
 
     fn set_profile(&mut self, v: &Value) -> R {
         let mut p = self.st.profile.clone().unwrap_or_default();
         if let Some(n) = v.get("nick").and_then(|x| x.as_str()) {
-            p.nick = clean_nick(n).ok_or("ник: 2–16 символов, латиница, цифры, точка, _ или -")?;
+            let n = clean_nick(n).ok_or("ник: 2–16 символов, латиница, цифры, точка, _ или -")?;
+            if n != p.nick {
+                let busy = self.nick_known(&n).is_some()
+                    || self.checks.get(&n).map(|c| matches!(c.done.as_deref(), Some("taken") | Some("maybe"))).unwrap_or(false);
+                if busy {
+                    return Err(format!("ник @{n} уже занят — выбери другой"));
+                }
+            }
+            p.nick = n;
         }
         if let Some(a) = v.get("ava").and_then(|x| x.as_str()) {
             if a.len() > 96 * 1024 {
@@ -178,7 +208,7 @@ impl Node {
 
     pub(crate) fn on_cmd(&mut self, v: Value) -> R {
         let c = s(&v, "cmd");
-        if self.st.profile.is_none() && !matches!(c.as_str(), "state" | "onboard" | "net" | "backup_import" | "config_set" | "ping") {
+        if self.st.profile.is_none() && !matches!(c.as_str(), "state" | "onboard" | "net" | "backup_import" | "config_set" | "ping" | "nick_check" | "log_ui") {
             return Err("сначала регистрация".into());
         }
         match c.as_str() {
@@ -343,6 +373,7 @@ impl Node {
                         pending: false,
                         inviter: String::new(),
                         inviter_addrs: vec![],
+                        clear_ts: 0,
                     },
                 );
                 self.st.save_rooms();
@@ -434,6 +465,7 @@ impl Node {
                         pending: true,
                         inviter: jc.p.clone(),
                         inviter_addrs: jc.a.clone(),
+                        clear_ts: 0,
                     },
                 );
                 self.st.save_rooms();
@@ -552,7 +584,7 @@ impl Node {
                 let id = s(&v, "room");
                 let before = v.get("before").and_then(|x| x.as_u64());
                 let limit = v.get("limit").and_then(|x| x.as_u64()).unwrap_or(80).min(500) as usize;
-                Ok(json!({ "room": id, "msgs": self.st.page(&id, before, limit), "total": self.st.msgs(&id).len() }))
+                Ok(json!({ "room": id, "msgs": self.st.page(&id, before, limit), "total": self.st.count(&id) }))
             }
             "send" => {
                 let id = s(&v, "room");
@@ -565,8 +597,144 @@ impl Node {
                 if text.trim().is_empty() && data.is_null() {
                     return Err("пустое сообщение".into());
                 }
+                if is_meta(&kind) {
+                    return Err("реакции и правки — отдельными командами".into());
+                }
                 let m = self.post(&id, &kind, &text, data, &s(&v, "reply"))?;
-                Ok(json!(m))
+                Ok(self.my_view(&m))
+            }
+            "react" => {
+                let id = s(&v, "room");
+                let to = s(&v, "id");
+                let e: String = s(&v, "e").chars().take(8).collect();
+                if e.is_empty() || e.len() > 32 {
+                    return Err("нужна реакция".into());
+                }
+                let t = self.st.get(&id, &to).ok_or("сообщение не найдено")?;
+                if is_meta(&t.kind) || t.kind == "sys" {
+                    return Err("на это реагировать нельзя".into());
+                }
+                let on = match b(&v, "on") {
+                    Some(x) => x,
+                    None => !self.reacted(&id, &to, &e),
+                };
+                self.post_meta(&id, "react", &e, json!({ "to": to, "e": e, "on": on }))
+            }
+            "edit" => {
+                let id = s(&v, "room");
+                let to = s(&v, "id");
+                let text: String = s(&v, "text").chars().take(4000).collect();
+                let t = self.st.get(&id, &to).ok_or("сообщение не найдено")?;
+                if t.from != self.me_s || is_meta(&t.kind) || t.kind == "sys" || t.kind == "sticker" {
+                    return Err("редактировать можно только свои сообщения".into());
+                }
+                if text.trim().is_empty() && t.kind == "text" {
+                    return Err("пустое сообщение — лучше удали".into());
+                }
+                self.post_meta(&id, "edit", &text, json!({ "to": to }))
+            }
+            "del" => {
+                let id = s(&v, "room");
+                let to = s(&v, "id");
+                let t = self.st.get(&id, &to).ok_or("сообщение не найдено")?;
+                let admin = self.st.rooms.get(&id).map(|r| r.kind == "group" && r.is_admin(&self.me_s)).unwrap_or(false);
+                if is_meta(&t.kind) || (t.from != self.me_s && !admin) {
+                    return Err("удалить у всех можно только своё".into());
+                }
+                self.post_meta(&id, "del", "удалил сообщение", json!({ "to": to }))
+            }
+            "msg_hide" => {
+                let id = s(&v, "room");
+                let to = s(&v, "id");
+                if !self.st.hide(&id, &to) {
+                    return Err("сообщение не найдено".into());
+                }
+                self.emit("msg_upd", json!({ "room": id, "id": to, "msg": null }));
+                let j = self.room_json(&id);
+                self.emit("room", json!({ "room": j }));
+                Ok(json!({ "ok": true }))
+            }
+            "room_clear" => {
+                let id = s(&v, "room");
+                if !self.st.rooms.contains_key(&id) {
+                    return Err("нет такой хаты".into());
+                }
+                let freed = self.st.clear(&id, now_ms());
+                let j = self.room_json(&id);
+                self.emit("room", json!({ "room": j, "cleared": true }));
+                Ok(json!({ "ok": true, "freed": freed }))
+            }
+            "media" => {
+                let (mime, name, b64) = self.st.media(&s(&v, "room"), &s(&v, "id")).ok_or("вложение не найдено")?;
+                Ok(json!({ "mime": mime, "name": name, "b64": b64 }))
+            }
+            "storage" => Ok(self.st.storage()),
+            "nick_check" => {
+                let Some(n) = clean_nick(&s(&v, "nick")) else { return Ok(json!({ "state": "bad" })) };
+                if self.st.profile.as_ref().map(|p| p.nick == n).unwrap_or(false) {
+                    return Ok(json!({ "nick": n, "state": "mine" }));
+                }
+                if let Some(p) = self.nick_known(&n) {
+                    return Ok(json!({ "nick": n, "state": "taken", "peer": p, "online": p.parse::<PeerId>().map(|x| self.online.contains_key(&x)).unwrap_or(false) }));
+                }
+                if let Some(c) = self.checks.get(&n) {
+                    if let Some(d) = &c.done {
+                        return Ok(json!({ "nick": n, "state": d, "peer": c.peer }));
+                    }
+                    if c.started.elapsed().as_secs() < 60 {
+                        return Ok(json!({ "nick": n, "state": "checking" }));
+                    }
+                }
+                if !self.st.config.dht || !self.swarm.behaviour().kad.is_enabled() {
+                    return Ok(json!({ "nick": n, "state": "nodht" }));
+                }
+                if !self.start_check(&n, false) {
+                    return Ok(json!({ "nick": n, "state": "wait" }));
+                }
+                Ok(json!({ "nick": n, "state": "checking" }))
+            }
+            "block" => {
+                let p = s(&v, "peer");
+                if p == self.me_s || p.parse::<PeerId>().is_err() {
+                    return Err("кривой peer".into());
+                }
+                let nick = self.nick(&p);
+                self.st.blocked.insert(p.clone(), Blocked { nick, ts: now_ms() });
+                self.st.save_blocked();
+                if self.st.friends.remove(&p).is_some() {
+                    self.st.save_friends();
+                    if let Ok(pid) = p.parse::<PeerId>() {
+                        if self.connected(&pid) {
+                            self.send(pid, Req::FriendRemove, Pend::Other);
+                        }
+                    }
+                    self.emit("friend_removed", json!({ "peer": p }));
+                }
+                self.nearby.remove(&p);
+                self.refresh_allow();
+                let bl = self.blocked_json();
+                self.emit("blocked", json!({ "blocked": bl }));
+                Ok(json!({ "blocked": bl }))
+            }
+            "unblock" => {
+                let p = s(&v, "peer");
+                self.st.blocked.remove(&p);
+                self.st.save_blocked();
+                self.refresh_allow();
+                let bl = self.blocked_json();
+                self.emit("blocked", json!({ "blocked": bl }));
+                Ok(json!({ "blocked": bl }))
+            }
+            "log_ui" => {
+                if self.ui_log.0.elapsed().as_secs() > 60 {
+                    self.ui_log = (std::time::Instant::now(), 0);
+                }
+                if self.ui_log.1 < 40 {
+                    self.ui_log.1 += 1;
+                    let text: String = s(&v, "text").chars().take(2000).collect();
+                    tracing::warn!("[ui:{}] {text}", s(&v, "k"));
+                }
+                Ok(json!({ "ok": true }))
             }
             "read" => {
                 let id = s(&v, "room");

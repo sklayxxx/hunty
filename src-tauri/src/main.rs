@@ -44,15 +44,81 @@ fn hunty_open(url: String) -> Result<(), String> {
     open::that_detached(&url).map_err(|e| e.to_string())
 }
 
-/// сохранить файл (бэкап, картинка из чата) в «Загрузки», вернуть путь
-#[tauri::command]
-fn hunty_save(app: AppHandle, name: String, b64: String) -> Result<String, String> {
+fn save_bytes(app: &AppHandle, name: &str, b64: &str) -> Result<String, String> {
     let data = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| format!("битые данные: {e}"))?;
     let dir = app.path().download_dir().or_else(|_| app.path().home_dir()).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = free_name(&dir, &clean_name(&name));
+    let path = free_name(&dir, &clean_name(name));
     std::fs::write(&path, data).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// сохранить файл (бэкап, картинка из чата) в «Загрузки», вернуть путь.
+/// async + отдельный поток: большой файл не подвешивает окно
+#[tauri::command]
+async fn hunty_save(app: AppHandle, name: String, b64: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_bytes(&app, &name, &b64)).await.map_err(|e| e.to_string())?
+}
+
+/// сохранить вложение из чата прямо из хранилища ядра (без гонки base64 через окно)
+#[tauri::command]
+async fn hunty_save_media(app: AppHandle, core: CoreS<'_>, room: String, id: String) -> Result<String, String> {
+    let h = core.h.read().await.clone().ok_or("ядро ещё запускается")?;
+    let v = h.cmd(json!({ "cmd": "media", "room": room, "id": id })).await?;
+    let name = v.get("name").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).unwrap_or("hunty-file").to_string();
+    let b64 = v.get("b64").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    tauri::async_runtime::spawn_blocking(move || save_bytes(&app, &name, &b64)).await.map_err(|e| e.to_string())?
+}
+
+/// показать сохранённый файл в проводнике
+#[tauri::command]
+fn hunty_reveal(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err("файла уже нет".into());
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer").arg(format!("/select,{}", p.display())).spawn();
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    open::that_detached(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())
+}
+
+/// hmedia://localhost/<хата>/<id> (в Windows — https://hmedia.localhost/…): картинки из чата
+/// грузятся как обычные файлы, а не гигантскими data:-строками через IPC.
+fn media_protocol(app: AppHandle, path: String, responder: tauri::UriSchemeResponder) {
+    use tauri::http::Response;
+    tauri::async_runtime::spawn(async move {
+        let p = path.trim_start_matches('/').replace("%2F", "/").replace("%2f", "/");
+        let (room, id) = p.split_once('/').unwrap_or((p.as_str(), ""));
+        let core = app.state::<Arc<Core>>().inner().clone();
+        let h = core.h.read().await.clone();
+        let got = match h {
+            Some(h) => h.cmd(json!({ "cmd": "media", "room": room, "id": id })).await.ok(),
+            None => None,
+        };
+        let decoded = got.as_ref().and_then(|v| {
+            let b = base64::engine::general_purpose::STANDARD.decode(v.get("b64")?.as_str()?.trim()).ok()?;
+            Some((v.get("mime")?.as_str()?.to_string(), b))
+        });
+        let resp = match decoded {
+            Some((mime, body)) => Response::builder()
+                .status(200)
+                .header("Content-Type", if mime.starts_with("image/") { mime.as_str() } else { "application/octet-stream" })
+                .header("Access-Control-Allow-Origin", "*")
+                .header("Cache-Control", "private, max-age=31536000, immutable")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Content-Security-Policy", "sandbox; default-src 'none'")
+                .body(body),
+            None => Response::builder().status(404).header("Access-Control-Allow-Origin", "*").body(Vec::new()),
+        };
+        match resp {
+            Ok(r) => responder.respond(r),
+            Err(_) => responder.respond(Response::new(Vec::new())),
+        }
+    });
 }
 
 fn clean_name(n: &str) -> String {
@@ -152,19 +218,44 @@ fn start_core(app: AppHandle, core: Arc<Core>) {
 }
 
 /// WebView2 по умолчанию спрашивает про мик и вебку при каждом звонке — для нашего окна
-/// разрешаем только их (голос и вебка). Остальные запросы идут обычным путём, с вопросом.
+/// разрешаем только их (голос и вебка) и чтение буфера обмена (своё меню «Вставить»).
+/// Остальные запросы идут обычным путём, с вопросом.
 /// Экран для демки всё равно выбирается в системном окне WebView2.
+/// Заодно делаю окно «приложением», а не браузером: без своего меню по правому клику,
+/// без F5/Ctrl+R/Ctrl+P/Alt+← , без строки статуса, зума щипком и свайпов «назад».
 #[cfg(windows)]
-fn allow_media(w: &WebviewWindow) {
+fn tune_webview(w: &WebviewWindow) {
     let _ = w.with_webview(|wv| unsafe {
         use webview2_com::Microsoft::Web::WebView2::Win32::*;
         use webview2_com::PermissionRequestedEventHandler;
+        use windows_core::Interface;
         let Ok(cw) = wv.controller().CoreWebView2() else { return };
+        if let Ok(st) = cw.Settings() {
+            let _ = st.SetAreDefaultContextMenusEnabled(false);
+            let _ = st.SetIsStatusBarEnabled(false);
+            let _ = st.SetIsZoomControlEnabled(false);
+            if let Ok(s3) = st.cast::<ICoreWebView2Settings3>() {
+                let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+            }
+            if let Ok(s4) = st.cast::<ICoreWebView2Settings4>() {
+                let _ = s4.SetIsGeneralAutofillEnabled(false);
+                let _ = s4.SetIsPasswordAutosaveEnabled(false);
+            }
+            if let Ok(s5) = st.cast::<ICoreWebView2Settings5>() {
+                let _ = s5.SetIsPinchZoomEnabled(false);
+            }
+            if let Ok(s6) = st.cast::<ICoreWebView2Settings6>() {
+                let _ = s6.SetIsSwipeNavigationEnabled(false);
+            }
+        }
         let handler = PermissionRequestedEventHandler::create(Box::new(|_, args| {
             if let Some(a) = args {
                 let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
                 a.PermissionKind(&mut kind)?;
-                if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA {
+                if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                    || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
+                    || kind == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ
+                {
                     a.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
                 }
             }
@@ -173,6 +264,22 @@ fn allow_media(w: &WebviewWindow) {
         let mut token = Default::default();
         let _ = cw.add_PermissionRequested(&handler, &mut token);
     });
+}
+
+/// окно никуда не уходит со своего интерфейса: чужие ссылки — в обычный браузер
+fn nav_ok(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "hmedia" | "about" | "data" | "blob" => true,
+        "http" | "https" => {
+            let h = url.host_str().unwrap_or("");
+            let local = h == "tauri.localhost" || h == "hmedia.localhost" || h == "ipc.localhost" || h == "localhost";
+            if !local {
+                let _ = open::that_detached(url.as_str());
+            }
+            local
+        }
+        _ => false,
+    }
 }
 
 fn main() {
@@ -188,13 +295,27 @@ fn main() {
             }
         }));
     }
+    let guard = tauri::plugin::Builder::<tauri::Wry, ()>::new("hunty-guard").on_navigation(|_, url| nav_ok(url)).build();
     let app = b
+        .plugin(guard)
+        .register_asynchronous_uri_scheme_protocol("hmedia", |ctx, req, responder| {
+            media_protocol(ctx.app_handle().clone(), req.uri().path().to_string(), responder);
+        })
         .manage(core.clone())
-        .invoke_handler(tauri::generate_handler![hunty, hunty_open, hunty_save, hunty_restart, hunty_attention, hunty_focused])
+        .invoke_handler(tauri::generate_handler![
+            hunty,
+            hunty_open,
+            hunty_save,
+            hunty_save_media,
+            hunty_reveal,
+            hunty_restart,
+            hunty_attention,
+            hunty_focused
+        ])
         .setup(move |app| {
             #[cfg(windows)]
             if let Some(w) = app.get_webview_window("main") {
-                allow_media(&w);
+                tune_webview(&w);
             }
             start_core(app.handle().clone(), core.clone());
             Ok(())

@@ -244,7 +244,7 @@ async fn web(l: TcpListener, c: Ctx) {
         tokio::spawn(async move {
             match tokio::time::timeout(Duration::from_secs(10), wants_ws(&s)).await {
                 Ok(true) => ws_client(s, c).await,
-                Ok(false) => http(s, c.ui.as_deref()).await,
+                Ok(false) => http(s, &c).await,
                 Err(_) => {}
             }
         });
@@ -313,16 +313,17 @@ async fn serve(ws: tokio_tungstenite::WebSocketStream<TcpStream>, h: Handle, mut
     while let Some(Ok(m)) = wrx.next().await {
         let Message::Text(t) = m else { continue };
         let v: Value = serde_json::from_str(t.as_str()).unwrap_or(Value::Null);
-        let id = v.get("id").cloned().unwrap_or(Value::Null);
+        // номер запроса — rid (поле id занято: у react/edit/del это id сообщения)
+        let id = v.get("rid").cloned().unwrap_or(Value::Null);
         let (h, otx) = (h.clone(), otx.clone());
         tokio::spawn(async move {
             let out = if v["cmd"] == "node_restart" {
                 restart_soon(h);
-                json!({ "id": id, "ok": true })
+                json!({ "rid": id, "ok": true })
             } else {
                 match h.cmd(v).await {
-                    Ok(x) => json!({ "id": id, "ok": x }),
-                    Err(e) => json!({ "id": id, "err": e }),
+                    Ok(x) => json!({ "rid": id, "ok": x }),
+                    Err(e) => json!({ "rid": id, "err": e }),
                 }
             };
             let _ = otx.send(out.to_string());
@@ -419,12 +420,64 @@ fn ctype(p: &Path) -> &'static str {
     }
 }
 
+fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines().find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case(name)).map(|(_, v)| v.trim()))
+}
+
+/// имя файла для Content-Disposition (RFC 5987)
+fn disp_name(n: &str) -> String {
+    let mut out = String::new();
+    for b in n.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    if out.is_empty() { "file".into() } else { out }
+}
+
+/// вложение из чата: /media/<хата>/<id>[?dl=1] — только для своей же страницы
+async fn media(s: &mut TcpStream, c: &Ctx, head: &str, rest: &str, query: &str) {
+    let site = header(head, "sec-fetch-site").unwrap_or("none");
+    let (room, id) = rest.split_once('/').unwrap_or((rest, ""));
+    let ok_site = site == "same-origin" || site == "none";
+    let got = if ok_site { c.h.cmd(json!({ "cmd": "media", "room": room, "id": id })).await.ok() } else { None };
+    let decoded = got.as_ref().and_then(|v| {
+        use base64::Engine;
+        let b = base64::engine::general_purpose::STANDARD.decode(v.get("b64")?.as_str()?.trim()).ok()?;
+        Some((v.get("mime")?.as_str()?.to_string(), v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(), b))
+    });
+    let Some((mime, name, body)) = decoded else {
+        let code = if ok_site { "404 Not Found" } else { "403 Forbidden" };
+        let _ = s.write_all(format!("HTTP/1.1 {code}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await;
+        return;
+    };
+    let dl = query.split('&').any(|x| x == "dl=1");
+    let img = mime.starts_with("image/") && !dl;
+    let ct = if img { mime.as_str() } else { "application/octet-stream" };
+    let disp = if img { String::new() } else { format!("Content-Disposition: attachment; filename*=UTF-8''{}\r\n", disp_name(&name)) };
+    let hdr = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {ct}\r\nContent-Length: {}\r\n{disp}Cache-Control: private, max-age=31536000, immutable\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'\r\nCross-Origin-Resource-Policy: same-origin\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = s.write_all(hdr.as_bytes()).await;
+    let _ = s.write_all(&body).await;
+}
+
 /// статика интерфейса: с диска (--ui, удобно править) или вшитая в бинарник
-async fn http(mut s: TcpStream, dir: Option<&Path>) {
+async fn http(mut s: TcpStream, c: &Ctx) {
+    let dir = c.ui.as_deref();
     let mut buf = vec![0u8; 16384];
     let n = s.read(&mut buf).await.unwrap_or(0);
-    let head = String::from_utf8_lossy(&buf[..n]);
-    let path = head.split_whitespace().nth(1).unwrap_or("/").split(['?', '#']).next().unwrap_or("/");
+    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+    let target = head.split_whitespace().nth(1).unwrap_or("/");
+    let target = target.split('#').next().unwrap_or("/");
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    if let Some(rest) = path.strip_prefix("/media/") {
+        media(&mut s, c, &head, rest, query).await;
+        return;
+    }
     let mut rel = path.trim_start_matches('/').to_string();
     if rel.is_empty() || rel.ends_with('/') {
         rel.push_str("index.html");

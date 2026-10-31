@@ -1,28 +1,47 @@
-// Общий UI: статус tmux, звуки, тосты, окна, контролы, масштаб, уведомления
+// Общий UI: всплывашки и журнал, звуки, тосты, окна, контролы, масштаб, уведомления
 import { $, $$, R, esc, ic, hm, pad, MON, reduce, mobile, prefs, setPref, bus, clamp } from './core.js';
 import { attention, focused, inTauri } from './api.js';
 
 export const app = $('.js-app');
 
-/* ---------- статус в tmux-строке ---------- */
-const tm = $('.js-tmsg'); let lastT = 0;
-export function tmsg(k, text, auto) {
-  if (!auto) lastT = Date.now(); else if (Date.now() - lastT < 5000) return;
-  tm.innerHTML = `<span class="st ${esc(k)}" aria-hidden="true"></span><span class="mt"></span>`;
-  tm.querySelector('.mt').textContent = text;
-  tm.classList.remove('flash-in'); void tm.offsetWidth; tm.classList.add('flash-in');
+/* ---------- всплывашка снизу и журнал ---------- */
+// tmsg(k, text) — короткая всплывашка (одна за раз); tmsg(k, text, true) — только в журнал (логи ядра и мелочи)
+export const JOURNAL = [];
+const snack = document.createElement('div'); snack.className = 'snack'; snack.setAttribute('role', 'status'); snack.setAttribute('aria-live', 'polite');
+document.body.appendChild(snack);
+let snT = 0;
+snack.addEventListener('click', () => { snack.classList.remove('on'); clearTimeout(snT); });
+snack.addEventListener('pointerenter', () => clearTimeout(snT));
+snack.addEventListener('pointerleave', () => { if (snack.classList.contains('on')) snT = setTimeout(() => snack.classList.remove('on'), 1500); });
+export function journal(k, text, src = 'hunty') {
+  JOURNAL.push({ t: Date.now(), k: String(k || 'ok'), text: String(text || ''), src });
+  if (JOURNAL.length > 400) JOURNAL.splice(0, JOURNAL.length - 400);
+  bus.emit('journal');
 }
+export function tmsg(k, text, auto) {
+  journal(k, text, auto ? 'ядро' : 'hunty');
+  if (auto) return;
+  const cls = k === 'err' ? 'err' : k === 'warn' ? 'warn' : k === 'ping' ? 'ping' : 'ok';
+  snack.innerHTML = `<span class="st ${cls}" aria-hidden="true"></span><span class="mt"></span>`;
+  snack.querySelector('.mt').textContent = text;
+  snack.className = 'snack glass ' + cls; void snack.offsetWidth; snack.classList.add('on');
+  clearTimeout(snT); snT = setTimeout(() => snack.classList.remove('on'), cls === 'err' ? 6000 : Math.min(6500, 2400 + String(text).length * 35));
+}
+bus.on('snack', (k, text) => tmsg(k, text));
 
 /* ---------- звук ---------- */
 let ac;
 export function actx() {
   try {
     if (!ac && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' }); sinkCtx(); }
     if (ac.state === 'suspended') ac.resume();
     return ac;
   } catch (_) { return null; }
 }
+// весь звук приложения (сигналы, громкость >100%, «слышать себя») — в выбранные наушники
+function sinkCtx() { if (ac && ac.setSinkId) { const id = prefs.outId || ''; if ((ac.sinkId || '') !== id) ac.setSinkId(id).catch(() => {}); } }
+bus.on('pref', k => { if (k === 'outId') sinkCtx(); });
 export function tone(seq, vol = 1) {
   if (!prefs.sound) return;
   const a = actx(); if (!a) return;
@@ -124,7 +143,7 @@ export const segGet = seg => { const b = seg && $('button[aria-pressed="true"]',
 export function rgv(r) {
   const v = +r.value, mn = +r.min || 0, mx = +r.max || 100;
   r.style.setProperty('--v', ((v - mn) / (mx - mn) * 100).toFixed(1) + '%');
-  const o = r.parentElement.querySelector('.rgv'); if (o) o.textContent = v + '%';
+  const o = r.parentElement.querySelector('.rgv'); if (o) o.textContent = v + (r.dataset.unit ?? '%');
 }
 document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('rg')) rgv(e.target); });
 export function copy(b) {
@@ -137,7 +156,12 @@ export async function copyText(v) {
   try { await navigator.clipboard.writeText(v); return true; }
   catch (_) { const ta = document.createElement('textarea'); ta.value = v; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (_) {} ta.remove(); return true; }
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && openWin) { e.preventDefault(); closeW(); } });
+// Esc: сначала меню (своё, в menu.js), потом картинка на весь экран, потом окно
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const lb = $('.js-lbox'); if (lb && !lb.hidden) { e.preventDefault(); lb.hidden = true; return; }
+  if (openWin) { e.preventDefault(); closeW(); }
+});
 
 /* ---------- масштаб под окно ---------- */
 const MINH = 600;
@@ -150,12 +174,13 @@ export function fit() {
   bus.emit('fit');
 }
 addEventListener('resize', fit);
+// Ctrl+колёсико, Ctrl+= / Ctrl+- / Ctrl+0 — свой масштаб (браузерный зум выключен)
+bus.on('zoom', d => {
+  const v = d === 0 ? 100 : clamp((prefs.scale || 100) + d * 5, 80, 130);
+  if (v === prefs.scale) return;
+  setPref('scale', v); fit(); tmsg('ok', 'масштаб ' + v + '%' + (d ? ' · Ctrl+0 — как было' : ''));
+});
 
-/* ---------- часы ---------- */
-function tick() {
-  const d = new Date();
-  $$('.js-date').forEach(e => e.textContent = hm(d) + ' ' + d.getDate() + '-' + MON[d.getMonth()] + '-' + String(d.getFullYear()).slice(2));
-  bus.emit('tick', d);
-}
-tick(); setInterval(tick, 1000);
+/* ---------- тик раз в секунду (таймеры звонка и т.п.) ---------- */
+setInterval(() => bus.emit('tick', new Date()), 1000);
 export { pad };

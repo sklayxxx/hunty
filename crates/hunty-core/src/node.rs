@@ -79,6 +79,8 @@ pub(crate) enum Pend {
     Hello,
     Whois,
     Find(String),
+    /// проверка «занят ли ник»: спрашиваю того, кто его опубликовал
+    Check(String),
     Join(String),
     Sync(String),
     Other,
@@ -89,6 +91,23 @@ pub(crate) enum Lookup {
     Peer(PeerId),
     Room(String),
     Nick(String),
+    Check(String),
+}
+
+/// Проверка ника на уникальность через DHT (без серверов — «насколько видно сети»).
+pub(crate) struct NickCheck {
+    pub started: Instant,
+    /// кто опубликовал этот ник и ещё не ответил «у меня другой»
+    pub providers: HashSet<PeerId>,
+    pub query_done: Option<Instant>,
+    /// free | taken | maybe
+    pub done: Option<String>,
+    pub peer: String,
+    pub at: Instant,
+    /// проверяю свой же ник (после регистрации без сети)
+    pub own: bool,
+    /// сколько DHT-запросов ещё идёт (ключи nick и nickreg)
+    pub queries: u8,
 }
 
 pub(crate) struct RelayUse {
@@ -119,6 +138,9 @@ pub struct Node {
     pub(crate) hunty_peers: HashSet<PeerId>,
     /// кого спросить «кто ты» после подключения (поиск по нику)
     pub(crate) find_want: HashMap<PeerId, (String, Instant)>,
+    pub(crate) check_want: HashMap<PeerId, (String, Instant)>,
+    pub(crate) checks: HashMap<String, NickCheck>,
+    pub(crate) ui_log: (Instant, u32),
     pub(crate) lan: HashMap<PeerId, Vec<Multiaddr>>,
     pub(crate) lan_probed: HashSet<PeerId>,
     pub(crate) nearby: BTreeMap<String, Profile>,
@@ -263,7 +285,7 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
             };
             let rr = request_response::Behaviour::with_codec(
                 request_response::json::codec::Codec::<Req, Resp>::default()
-                    .set_request_size_maximum(8 << 20)
+                    .set_request_size_maximum(12 << 20)
                     .set_response_size_maximum(64 << 20),
                 [(StreamProtocol::new(PROTOCOL), ProtocolSupport::Full)],
                 request_response::Config::default()
@@ -335,6 +357,9 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
         join_sent: HashMap::new(),
         hunty_peers: HashSet::new(),
         find_want: HashMap::new(),
+        check_want: HashMap::new(),
+        checks: HashMap::new(),
+        ui_log: (Instant::now(), 0),
         lan: HashMap::new(),
         lan_probed: HashSet::new(),
         nearby: BTreeMap::new(),
@@ -461,6 +486,9 @@ impl Node {
                 set.insert(r.inviter.clone());
             } else {
                 for m in r.live_members() {
+                    if r.kind == "dm" && self.st.blocked.contains_key(&m.peer) {
+                        continue;
+                    }
                     set.insert(m.peer.clone());
                 }
             }
@@ -572,6 +600,7 @@ impl Node {
             Lookup::Peer(p) => (format!("p:{p}"), dht_key("peer", &p.to_string())),
             Lookup::Room(r) => (format!("r:{r}"), dht_key("room", r)),
             Lookup::Nick(n) => (format!("n:{n}"), dht_key("nick", n)),
+            Lookup::Check(n) => (format!("c:{n}"), dht_key("nick", n)),
         };
         if self.lookups.get(&k).map(|t| t.elapsed() < Duration::from_secs(45)).unwrap_or(false) {
             return;
@@ -637,6 +666,80 @@ impl Node {
         self.hello_inflight.insert(p);
         let req = self.hello_req(&p);
         self.send(p, req, Pend::Hello);
+    }
+
+    // ---------- уникальность ников ----------
+    /// Кто из знакомых уже носит этот ник (друзья, участники хат, соседи по локалке).
+    pub(crate) fn nick_known(&self, n: &str) -> Option<String> {
+        if let Some(f) = self.st.friends.values().find(|f| f.profile.nick == n) {
+            return Some(f.peer.clone());
+        }
+        for r in self.st.rooms.values() {
+            if let Some(m) = r.live_members().find(|m| m.nick == n && m.peer != self.me_s) {
+                return Some(m.peer.clone());
+            }
+        }
+        self.nearby.iter().find(|(_, p)| p.nick == n).map(|(k, _)| k.clone())
+    }
+
+    /// Ищу в DHT, кто опубликовал ник, и спрашиваю каждого «как тебя зовут».
+    pub(crate) fn start_check(&mut self, n: &str, own: bool) -> bool {
+        if !self.dht_ready() {
+            return false;
+        }
+        let mut qs = vec![];
+        if let Some(k) = self.swarm.behaviour_mut().kad.as_mut() {
+            qs.push(k.get_providers(dht_key("nick", n)));
+            qs.push(k.get_providers(dht_key("nickreg", n)));
+        }
+        for q in &qs {
+            self.lookup_q.insert(*q, Lookup::Check(n.to_string()));
+        }
+        let now = Instant::now();
+        self.checks.insert(
+            n.to_string(),
+            NickCheck { started: now, providers: HashSet::new(), query_done: None, done: None, peer: String::new(), at: now, own, queries: qs.len() as u8 },
+        );
+        true
+    }
+
+    pub(crate) fn finish_check(&mut self, n: &str, state: &str, peer: &str) {
+        let Some(c) = self.checks.get_mut(n) else { return };
+        if c.done.is_some() {
+            return;
+        }
+        c.done = Some(state.to_string());
+        c.peer = peer.to_string();
+        c.at = Instant::now();
+        let own = c.own;
+        self.emit("nick_status", json!({ "nick": n, "state": state, "peer": peer, "own": own }));
+        if own && state == "taken" {
+            self.log("warn", format!("ник @{n} уже занят кем-то ещё — смени его в настройках, чтобы вас не путали"));
+        }
+    }
+
+    fn tick_checks(&mut self, now: Instant) {
+        let mut fin = vec![];
+        for (n, c) in &self.checks {
+            if c.done.is_some() {
+                continue;
+            }
+            let qd = c.query_done.map(|t| now.duration_since(t));
+            if c.providers.is_empty() && qd.is_some() {
+                fin.push((n.clone(), "free"));
+            } else if !c.providers.is_empty() && qd.map(|d| d > Duration::from_secs(12)).unwrap_or(false) {
+                // опубликовал кто-то, кто сейчас не отвечает — скорее всего, ник его
+                fin.push((n.clone(), "maybe"));
+            } else if now.duration_since(c.started) > Duration::from_secs(50) {
+                fin.push((n.clone(), if c.providers.is_empty() { "free" } else { "maybe" }));
+            }
+        }
+        for (n, st) in fin {
+            self.finish_check(&n, st, "");
+        }
+        self.checks.retain(|_, c| c.done.is_none() || now.duration_since(c.at) < Duration::from_secs(1800));
+        self.check_want.retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(60));
+        self.find_want.retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(120));
     }
 
     // ---------- события Swarm ----------
@@ -831,6 +934,9 @@ impl Node {
             let addrs: Vec<Multiaddr> =
                 info.listen_addrs.iter().filter(|a| self.opts.local_only || !is_loopback(a)).cloned().collect();
             self.remember(&peer, addrs);
+            if let Some((nick, _)) = self.check_want.remove(&peer) {
+                self.send(peer, Req::Whois, Pend::Check(nick));
+            }
             if let Some((nick, _)) = self.find_want.remove(&peer) {
                 self.send(peer, Req::Whois, Pend::Find(nick));
             } else if self.known(&peer) {
@@ -862,6 +968,10 @@ impl Node {
                     if !self.bootstrapped {
                         self.bootstrapped = true;
                         self.log("ok", "DHT: подключился к публичной сети IPFS");
+                        // регистрировался без сети — проверю, не занял ли кто мой ник раньше
+                        if let Some(n) = self.st.profile.as_ref().map(|p| p.nick.clone()) {
+                            self.start_check(&n, true);
+                        }
                     }
                 }
                 kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders { providers, .. })) => {
@@ -895,6 +1005,22 @@ impl Node {
                                     }
                                 }
                             }
+                            Lookup::Check(n) => {
+                                for p in providers {
+                                    if p == self.me || self.checks.get(&n).map(|c| c.done.is_some()).unwrap_or(true) {
+                                        continue;
+                                    }
+                                    if let Some(c) = self.checks.get_mut(&n) {
+                                        c.providers.insert(p);
+                                    }
+                                    if self.connected(&p) && self.hunty_peers.contains(&p) {
+                                        self.send(p, Req::Whois, Pend::Check(n.clone()));
+                                    } else {
+                                        self.check_want.insert(p, (n.clone(), Instant::now()));
+                                        self.dial(p, &[]);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -906,7 +1032,14 @@ impl Node {
                 _ => {}
             }
             if step.last {
-                self.lookup_q.remove(&id);
+                if let Some(Lookup::Check(n)) = self.lookup_q.remove(&id) {
+                    if let Some(c) = self.checks.get_mut(&n) {
+                        c.queries = c.queries.saturating_sub(1);
+                        if c.queries == 0 {
+                            c.query_done = Some(Instant::now());
+                        }
+                    }
+                }
             }
         }
     }
@@ -938,6 +1071,24 @@ impl Node {
     // ---------- таймер ----------
     fn on_tick(&mut self) {
         let now = Instant::now();
+        // DHT поднимаю ещё до регистрации — чтобы проверить ник на уникальность
+        if self.swarm.behaviour().kad.is_enabled() {
+            let need = match self.last_boot {
+                None => true,
+                Some(t) => now.duration_since(t) > if self.bootstrapped { Duration::from_secs(600) } else { Duration::from_secs(30) },
+            };
+            if need {
+                self.last_boot = Some(now);
+                if let Some(k) = self.swarm.behaviour_mut().kad.as_mut() {
+                    let _ = k.bootstrap();
+                }
+            }
+        }
+        self.tick_checks(now);
+        // переписать файл, где удалили сообщения (по одному за тик — не тормозить сеть)
+        if let Some(room) = self.st.dirty().into_iter().next() {
+            self.st.compact(&room);
+        }
         if self.st.profile.is_none() {
             return;
         }
@@ -961,18 +1112,8 @@ impl Node {
         for r in pend {
             self.lookup(Lookup::Room(r));
         }
-        // 3. DHT
+        // 3. DHT: публикую себя
         if self.swarm.behaviour().kad.is_enabled() {
-            let need = match self.last_boot {
-                None => true,
-                Some(t) => now.duration_since(t) > if self.bootstrapped { Duration::from_secs(600) } else { Duration::from_secs(30) },
-            };
-            if need {
-                self.last_boot = Some(now);
-                if let Some(k) = self.swarm.behaviour_mut().kad.as_mut() {
-                    let _ = k.bootstrap();
-                }
-            }
             let settle = self.addr_dirty.map(|t| now.duration_since(t) > Duration::from_secs(8)).unwrap_or(false);
             // первые публикации чаще: DHT капризный, адреса за NAT ещё плывут
             let every = match self.provide_n { 0..=1 => 60, 2..=3 => 300, _ => 20 * 60 };
@@ -982,8 +1123,10 @@ impl Node {
                 self.provide_n += 1;
                 self.addr_dirty = None;
                 let mut keys = vec![dht_key("peer", &self.me_s)];
-                if self.st.config.findable {
-                    if let Some(p) = &self.st.profile {
+                if let Some(p) = &self.st.profile {
+                    // nickreg — «ник занят» (для проверки уникальности), nick — «можно найти по нику»
+                    keys.push(dht_key("nickreg", &p.nick));
+                    if self.st.config.findable {
                         keys.push(dht_key("nick", &p.nick));
                     }
                 }

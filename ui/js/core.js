@@ -43,7 +43,7 @@ export const bus = {
 const PDEF = {
   micId: '', outId: '', camId: '', micVol: 100, outVol: 100, ptt: 0, ns: true, ec: true, agc: true, bitrate: 64,
   camRes: 720, camMirror: true, shareRes: 1080, shareFps: 30, shareAudio: false, shareDraw: 'all', pinTtl: 10, shareHint: 'detail',
-  glass: 'liquid', glassA: 60, scale: 100, boot: true,
+  glass: 'liquid', glassA: 60, scale: 100, boot: true, liveBg: false, lite: false, gate: 'auto', gateDb: -50,
   sound: true, say: false, voiceName: '', notifVol: 70, dnd: 0, mentionsOnly: false, friendOnline: true, flash: true,
   vol: {}, mute: {}, pinned: [], lastChat: '', eggs: [],
 };

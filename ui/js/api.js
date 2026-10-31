@@ -32,7 +32,7 @@ function wsConnect() {
     };
     s.onmessage = m => {
       let v; try { v = JSON.parse(m.data); } catch (_) { return; }
-      if (v.id != null && wait.has(v.id)) { const [r, j] = wait.get(v.id); wait.delete(v.id); v.err != null ? j(new Error(v.err)) : r(v.ok); }
+      if (v.rid != null && wait.has(v.rid)) { const [r, j] = wait.get(v.rid); wait.delete(v.rid); v.err != null ? j(new Error(v.err)) : r(v.ok); }
       else dispatch(v);
     };
   });
@@ -54,7 +54,8 @@ export async function api(cmd, args = {}) {
     catch (e) { throw new Error(typeof e === 'string' ? e : (e && e.message) || String(e)); }
   }
   const s = await wsConnect();
-  return new Promise((r, j) => { const i = ++seq; wait.set(i, [r, j]); s.send(JSON.stringify({ id: i, cmd, ...args })); });
+  // номер запроса — rid, а не id: у react/edit/del поле id — это id сообщения
+  return new Promise((r, j) => { const i = ++seq; wait.set(i, [r, j]); s.send(JSON.stringify({ ...args, cmd, rid: i })); });
 }
 
 /* ---------- то, что умеет только оболочка (Tauri) ---------- */
@@ -78,6 +79,19 @@ export async function saveFile(name, data, mime = 'application/octet-stream') {
   const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   return 'Загрузки/' + name;
 }
+/** адрес картинки/файла из чата: ядро отдаёт вложение по ссылке, а не огромной строкой через мост */
+export function mediaURL(room, id) {
+  if (inTauri && T.core.convertFileSrc) return T.core.convertFileSrc(room + '/' + id, 'hmedia');
+  return `/media/${encodeURIComponent(room)}/${encodeURIComponent(id)}`;
+}
+/** сохранить вложение из чата: в приложении — в «Загрузки» (вернёт путь), в браузере — скачивание */
+export async function saveMedia(room, id, name = 'file') {
+  if (inTauri) return T.core.invoke('hunty_save_media', { room, id });
+  const a = document.createElement('a'); a.href = mediaURL(room, id) + '?dl=1'; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  return 'Загрузки/' + name;
+}
+/** показать файл в проводнике (только приложение) */
+export async function reveal(path) { if (inTauri) { try { await T.core.invoke('hunty_reveal', { path }); return true; } catch (_) {} } return false; }
 export async function restart() {
   if (inTauri) return T.core.invoke('hunty_restart');
   // браузерный режим: узел перезапустит сам себя, страница переподключится и обновится
