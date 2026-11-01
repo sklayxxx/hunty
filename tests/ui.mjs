@@ -104,7 +104,7 @@ if (only('voice')) {
   await B.click('.js-vjoin'); await sleep(4500);
   await shot(A, 'd1-voice-A'); await shot(B, 'd1-voice-B');
   console.log('pcs', JSON.stringify(await dump(A)), JSON.stringify(await dump(B)));
-  console.log('rows A', await A.evaluate(() => [...document.querySelectorAll('.vr')].map(r => r.className + ' ' + r.textContent.trim().slice(0, 40))));
+  console.log('rows A', await A.evaluate(() => [...document.querySelectorAll('.vtile')].map(r => r.className + ' ' + r.textContent.trim().slice(0, 40))));
   const la = await levels(A), lb = await levels(B);
   console.log('audio A', JSON.stringify(la), '· B', JSON.stringify(lb));
   // B должен быть слышен у A; обратно меряем, только если у B живой AudioContext (в Firefox без звуковой карты он спит)
@@ -113,12 +113,12 @@ if (only('voice')) {
   step('cam');
   await A.click('.js-cam'); await sleep(3500);
   await shot(B, 'd2-cam-B'); await shot(A, 'd2-cam-A');
-  console.log('B cam tiles', await B.evaluate(() => [...document.querySelectorAll('.camt video, .dvid video')].map(v => v.videoWidth + 'x' + v.videoHeight + ' ' + (v.srcObject ? 'src' : '-'))));
+  console.log('B cam tiles', await B.evaluate(() => [...document.querySelectorAll('.vtile .tv, .vtile video, .dvid video')].map(v => v.videoWidth + 'x' + v.videoHeight + ' ' + (v.srcObject ? 'src' : '-'))));
   step('share');
   await B.click('.js-share'); await sleep(500); await shot(B, 'd3-share-win');
   await B.click('.js-sstart'); await sleep(4500);
   await shot(A, 'd4-share-A'); await shot(B, 'd4-share-B');
-  console.log('A demo video', await A.evaluate(() => { const v = document.querySelector('.js-dv, .demo video'); return v ? v.videoWidth + 'x' + v.videoHeight : 'none'; }));
+  console.log('A demo video', await A.evaluate(() => { const v = document.querySelector('.js-dvid, .js-dv, .demo video'); return v ? v.videoWidth + 'x' + v.videoHeight : 'none'; }));
   step('draw');
   await A.click('.tl[data-tool="pen"]'); await sleep(200);
   const box = await A.locator('.js-ink').boundingBox();

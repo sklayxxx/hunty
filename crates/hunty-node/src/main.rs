@@ -414,6 +414,8 @@ fn ctype(p: &Path) -> &'static str {
         "wav" => "audio/wav",
         "mp3" => "audio/mpeg",
         "ogg" => "audio/ogg",
+        "webm" => "video/webm",
+        "mp4" => "video/mp4",
         "wasm" => "application/wasm",
         "ico" => "image/x-icon",
         "txt" | "md" => "text/plain; charset=utf-8",
@@ -455,7 +457,8 @@ async fn media(s: &mut TcpStream, c: &Ctx, head: &str, rest: &str, query: &str) 
         return;
     };
     let dl = query.split('&').any(|x| x == "dl=1");
-    let img = mime.starts_with("image/") && !dl;
+    // картинки, клипы и звуки показываем прямо в чате; остальное — только скачиванием
+    let img = (mime.starts_with("image/") || mime.starts_with("video/") || mime.starts_with("audio/")) && !dl;
     let ct = if img { mime.as_str() } else { "application/octet-stream" };
     let disp = if img { String::new() } else { format!("Content-Disposition: attachment; filename*=UTF-8''{}\r\n", disp_name(&name)) };
     let hdr = format!(

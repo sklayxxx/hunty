@@ -1,8 +1,8 @@
 // Пикер эмодзи и стикеров (как в Discord): вкладки, поиск, разделы, недавние, свои стикеры.
 // openPicker({el, tab, mode:'insert'|'react', onEmoji, onSticker}) — одна панель на всё приложение
-import { $, $$, esc, ic, prefs, setPref, reduce, clamp } from './core.js';
+import { $, $$, esc, ic, prefs, setPref, reduce, clamp, bus } from './core.js';
 import { emoImg, emoKey, emoSrc } from './emoji.js';
-import { HUNTY, MOBSTK, mobStk, stkName, myStickers, makeSticker, addSticker, delSticker } from './stickers.js';
+import { HUNTY, MOBSTK, mobStk, stkName, myStickers, delSticker, finWrap } from './stickers.js';
 import { MOBS } from './mobs.js';
 import { segPill } from './ui.js';
 
@@ -15,8 +15,7 @@ function el() {
   P.innerHTML = `<div class="epk-h"><div class="seg slide epk-tabs" role="tablist"><button type="button" data-v="emoji" aria-pressed="true">Эмодзи</button><button type="button" data-v="sticker" aria-pressed="false">Стикеры</button></div>
     <label class="epk-s">${ic('search')}<input class="js-eq" placeholder="Найти эмодзи" autocomplete="off" spellcheck="false" aria-label="Поиск"><button type="button" class="epk-x js-eqx" aria-label="Очистить" hidden>${ic('x')}</button></label></div>
     <div class="epk-b"><nav class="epk-rail js-erail" aria-label="Разделы"></nav><div class="epk-g js-eg" tabindex="-1"></div></div>
-    <div class="epk-f"><span class="epk-pv js-epv"></span><span class="epk-pt"><b class="js-epn">Выбери эмодзи</b><small class="js-eps">наведи — покажу название</small></span></div>
-    <input type="file" class="js-estkf" accept="image/*" hidden>`;
+    <div class="epk-f"><span class="epk-pv js-epv"></span><span class="epk-pt"><b class="js-epn">Выбери эмодзи</b><small class="js-eps">наведи — покажу название</small></span></div>`;
   document.body.appendChild(P);
   $('.epk-tabs', P).addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (b) setTab(b.dataset.v); });
   const q = $('.js-eq', P);
@@ -31,7 +30,7 @@ function el() {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.e) { pickEmoji(b.dataset.e, e.shiftKey); return; }
     if (b.dataset.s) { pickSticker(JSON.parse(b.dataset.s)); return; }
-    if (b.classList.contains('js-eadd')) $('.js-estkf', P).click();
+    if (b.classList.contains('js-eadd')) { closePicker(); bus.emit('stkmake', { pick: true }); }
   });
   g.addEventListener('contextmenu', async e => {
     const b = e.target.closest('[data-my]'); if (!b) return; e.preventDefault(); e.stopPropagation();
@@ -44,11 +43,6 @@ function el() {
   $('.js-erail', P).addEventListener('click', e => {
     const b = e.target.closest('[data-sec]'); if (!b) return;
     const s = $(`.epk-sec[data-sec="${b.dataset.sec}"]`, P); if (s) g.scrollTo({ top: s.offsetTop - 4, behavior: reduce ? 'auto' : 'smooth' });
-  });
-  $('.js-estkf', P).addEventListener('change', async e => {
-    const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
-    try { const src = await makeSticker(f); await addSticker(src, f.name.replace(/\.[^.]+$/, '')); buildStickers(true); }
-    catch (_) { /* не картинка */ }
   });
   document.addEventListener('pointerdown', e => { if (!P.hidden && !P.contains(e.target) && !(opt.el && opt.el.contains(e.target))) closePicker(); }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !P.hidden) { e.preventDefault(); e.stopPropagation(); closePicker(true); } }, true);
@@ -73,14 +67,17 @@ async function buildEmoji() {
   $('.js-erail', P).innerHTML = `<button type="button" data-sec="r" title="Часто используемые">${ic('clock')}</button>` + CAT.map((k, i) => `<button type="button" data-sec="${i}" title="${esc(data.GROUPS[i])}"><img src="${emoSrc(k)}" alt="" draggable="false"></button>`).join('');
   built.emoji = true; railSync();
 }
-function stkCell(dt, src, name, my) { return `<button type="button" class="sc" data-s="${esc(JSON.stringify(dt))}" data-n="${esc(name)}" title="${esc(name)}"${my ? ` data-my="${esc(my)}"` : ''}><img src="${esc(src)}" alt="${esc(name)}" loading="lazy" decoding="async" draggable="false"></button>`; }
+function stkCell(dt, src, name, my, fin) {
+  const img = `<img src="${esc(src)}" alt="${esc(name)}" loading="lazy" decoding="async" draggable="false">`;
+  return `<button type="button" class="sc" data-s="${esc(JSON.stringify(dt))}" data-n="${esc(name)}" title="${esc(name)}"${my ? ` data-my="${esc(my)}"` : ''}>${fin ? finWrap({ fin }, img, esc(src)) : img}</button>`;
+}
 async function buildStickers(keep) {
   const g = $('.js-eg', P), top = keep ? g.scrollTop : 0, mine = await myStickers();
   const rec = (prefs.stkRecent || []).filter(d => d && (d.k !== 'my' || mine.some(s => s.id === d.id))).slice(0, 8);
   const src = d => d.k === 'my' ? (mine.find(s => s.id === d.id) || {}).src : d.k.startsWith('mob:') ? mobStk(d.k.slice(4)) : 'stickers/' + d.k + '.webp';
   let h = '';
-  if (rec.length) h += `<section class="epk-sec" data-sec="r"><h4>${ic('clock')}Недавние</h4><div class="epk-grid s">${rec.map(d => stkCell(d, src(d), d.k === 'my' ? (mine.find(s => s.id === d.id) || {}).n || 'мой стикер' : stkName(d))).join('')}</div></section>`;
-  h += `<section class="epk-sec" data-sec="my"><h4>${ic('star')}Мои<small>видишь только ты · правый клик — убрать</small></h4><div class="epk-grid s">${mine.map(s => stkCell({ k: 'my', id: s.id }, s.src, s.n || 'мой стикер', s.id)).join('')}<button type="button" class="sc add js-eadd" title="Добавить свой стикер из картинки">${ic('plus')}<small>Свой</small></button></div></section>`;
+  if (rec.length) h += `<section class="epk-sec" data-sec="r"><h4>${ic('clock')}Недавние</h4><div class="epk-grid s">${rec.map(d => { const my = d.k === 'my' ? mine.find(s => s.id === d.id) || {} : null; return stkCell(d, src(d), my ? my.n || 'мой стикер' : stkName(d), '', my && my.fin); }).join('')}</div></section>`;
+  h += `<section class="epk-sec" data-sec="my"><h4>${ic('star')}Мои<small>видишь только ты · правый клик — убрать</small></h4><div class="epk-grid s">${mine.map(s => stkCell({ k: 'my', id: s.id }, s.src, s.n || 'мой стикер', s.id, s.fin)).join('')}<button type="button" class="sc add js-eadd" title="Сделать свой стикер: вырезать из картинки, обвести, добавить блеск">${ic('plus')}<small>Создать</small></button></div></section>`;
   h += `<section class="epk-sec" data-sec="h"><h4>Hunty 3D</h4><div class="epk-grid s">${HUNTY.map(([k, n]) => stkCell({ k }, 'stickers/' + k + '.webp', n)).join('')}</div></section>`;
   h += `<section class="epk-sec" data-sec="m"><h4>Мобы</h4><div class="epk-grid s">${MOBSTK.map(k => stkCell({ k: 'mob:' + k }, mobStk(k), MOBS[k].n)).join('')}</div></section>`;
   g.innerHTML = h; g.scrollTop = top;
@@ -132,7 +129,7 @@ function pickEmoji(g, keep) {
 async function pickSticker(dt) {
   setPref('stkRecent', [dt, ...(prefs.stkRecent || []).filter(x => JSON.stringify(x) !== JSON.stringify(dt))].slice(0, 12));
   const fn = opt.onSticker; closePicker();
-  if (dt.k === 'my') { const s = (await myStickers()).find(x => x.id === dt.id); if (!s) return; fn && fn({ k: 'my', src: s.src, n: s.n || '' }); return; }
+  if (dt.k === 'my') { const s = (await myStickers()).find(x => x.id === dt.id); if (!s) return; fn && fn({ k: 'my', src: s.src, n: s.n || '', ...(s.fin ? { fin: s.fin } : {}) }); return; }
   fn && fn(dt);
 }
 

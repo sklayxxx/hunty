@@ -1,61 +1,8 @@
-// То, что умеет только приложение (Tauri): хоткеи в играх и статус «играет в…».
-// Клавиши не перехватываются (игра их получает как обычно) — оболочка лишь смотрит, нажаты ли они.
+// То, что умеет только приложение (Tauri): статус «играет в…» (хоткеи в играх — в keys.js).
 // Список программ никуда не уходит: здесь ищем среди них игры, друзьям летит только название игры.
 import { prefs, bus } from './core.js';
-import { api, inTauri, shell, shellListen } from './api.js';
+import { api, inTauri, shell } from './api.js';
 import { S } from './state.js';
-import { V, toggleMic, toggleDeaf, setPtt, pttCode } from './voice.js';
-
-/* ---------- клавиши ---------- */
-const VKT = { Space: 0x20, Tab: 0x09, CapsLock: 0x14, ShiftLeft: 0xA0, ShiftRight: 0xA1, ControlLeft: 0xA2, ControlRight: 0xA3, AltLeft: 0xA4, AltRight: 0xA5,
-  Backquote: 0xC0, Minus: 0xBD, Equal: 0xBB, BracketLeft: 0xDB, BracketRight: 0xDD, Backslash: 0xDC, Semicolon: 0xBA, Quote: 0xDE, Comma: 0xBC, Period: 0xBE, Slash: 0xBF,
-  Insert: 0x2D, Delete: 0x2E, Home: 0x24, End: 0x23, PageUp: 0x21, PageDown: 0x22, ArrowUp: 0x26, ArrowDown: 0x28, ArrowLeft: 0x25, ArrowRight: 0x27,
-  Enter: 0x0D, Backspace: 0x08, Pause: 0x13, ScrollLock: 0x91, NumpadAdd: 0x6B, NumpadSubtract: 0x6D, NumpadMultiply: 0x6A, NumpadDivide: 0x6F, NumpadDecimal: 0x6E,
-  Mouse3: 0x04, Mouse4: 0x05, Mouse5: 0x06 };
-/** e.code → виртуальный код клавиши Windows (0 — не знаем) */
-export function vkOf(code) {
-  let m;
-  if ((m = /^Key([A-Z])$/.exec(code))) return m[1].charCodeAt(0);
-  if ((m = /^Digit(\d)$/.exec(code))) return 0x30 + +m[1];
-  if ((m = /^Numpad(\d)$/.exec(code))) return 0x60 + +m[1];
-  if ((m = /^F(\d{1,2})$/.exec(code)) && +m[1] >= 1 && +m[1] <= 24) return 0x6F + +m[1];
-  return VKT[code] || 0;
-}
-const KN = { Space: 'Пробел', CapsLock: 'Caps Lock', ShiftLeft: 'Левый Shift', ShiftRight: 'Правый Shift', ControlLeft: 'Левый Ctrl', ControlRight: 'Правый Ctrl',
-  AltLeft: 'Левый Alt', AltRight: 'Правый Alt', Backquote: 'Ё', Tab: 'Tab', Enter: 'Enter', Mouse3: 'Колёсико', Mouse4: 'Мышь «назад»', Mouse5: 'Мышь «вперёд»',
-  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Insert: 'Insert', Delete: 'Delete', Home: 'Home', End: 'End', PageUp: 'Page Up', PageDown: 'Page Down' };
-/** как показать клавишу человеку */
-export function keyName(code) {
-  code = code || 'KeyV'; let m;
-  if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
-  if ((m = /^Digit(\d)$/.exec(code))) return m[1];
-  if ((m = /^Numpad(\d)$/.exec(code))) return 'Num ' + m[1];
-  return KN[code] || code;
-}
-const CTRL = 0x11, SHIFT = 0x10, KM = 0x4D, KD = 0x44;
-const down = new Set();
-let pttVk = 0;
-export const gkeysOk = () => inTauri && /win/i.test(navigator.userAgent);
-async function syncKeys() {
-  if (!inTauri) return;
-  pttVk = vkOf(pttCode());
-  const want = !!prefs.pttGlobal;
-  const vks = want ? [CTRL, SHIFT, KM, KD].concat(pttVk ? [pttVk] : []) : [];
-  try { V.gkeys = !!(await shell('hunty_keys', { vks })) && want; } catch (_) { V.gkeys = false; }
-  if (!V.gkeys) down.clear();
-}
-if (inTauri) {
-  shellListen('hunty-key', ({ vk, down: d }) => {
-    if (d) down.add(vk); else down.delete(vk);
-    if (vk === pttVk) { if (+prefs.ptt && V.room) setPtt(!!d); else if (!d) setPtt(false); }
-    if (d && down.has(CTRL) && down.has(SHIFT) && !document.hasFocus()) { // в окне Hunty это и так ловится обычным образом
-      if (vk === KM) toggleMic();
-      if (vk === KD) toggleDeaf();
-    }
-  });
-  syncKeys();
-  bus.on('pref', k => { if (k === 'pttGlobal' || k === 'pttKey') syncKeys(); });
-}
 
 /* ---------- «играет в…» ---------- */
 // имя .exe (в нижнем регистре) → как показать; javaw — почти всегда майн у нашей аудитории, но только если больше ничего не нашли

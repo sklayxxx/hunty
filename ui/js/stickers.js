@@ -32,26 +32,18 @@ export function stkName(dt) {
 }
 
 /* ---------- свои стикеры: лежат только у тебя (IndexedDB), уходят картинкой в сообщении ---------- */
+/** покрытие своего стикера: блик бежит по нему (рисует CSS, в картинке его нет) */
+export const FINS = new Set(['gloss', 'holo']);
+/** обёртка для стикера с покрытием */
+export const finWrap = (dt, img, src) => dt && FINS.has(dt.fin) ? `<span class="stkfx ${dt.fin}" style="--m:url(&quot;${src}&quot;)">${img}</span>` : img;
 let mine = null;
 export async function myStickers() { if (!mine) { try { mine = (await idb.get('stickers')) || []; } catch (_) { mine = []; } } return mine; }
 async function saveMine() { try { await idb.set('stickers', mine); } catch (_) {} }
-/** картинка → стикер 256px webp (прозрачность сохраняется), до ~120 КБ */
-export async function makeSticker(file) {
-  const bm = await createImageBitmap(file);
-  let side = 256, q = .9, url = '';
-  for (let i = 0; i < 4; i++) {
-    const k = Math.min(1, side / Math.max(bm.width, bm.height)), w = Math.max(1, Math.round(bm.width * k)), h = Math.max(1, Math.round(bm.height * k));
-    const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bm, 0, 0, w, h);
-    url = c.toDataURL('image/webp', q);
-    if (url.length < 160000) break;
-    side = Math.round(side * .8); q -= .1;
-  }
-  return url;
-}
-export async function addSticker(src, n = '') {
+export async function addSticker(src, n = '', fin = '') {
   await myStickers();
   if (mine.some(s => s.src === src)) return mine.find(s => s.src === src);
   const s = { id: Math.random().toString(36).slice(2, 10), src, n: String(n).slice(0, 40) };
+  if (FINS.has(fin)) s.fin = fin;
   mine.unshift(s); if (mine.length > 80) mine.length = 80; await saveMine(); return s;
 }
 export async function delSticker(id) { await myStickers(); mine = mine.filter(s => s.id !== id); await saveMine(); }

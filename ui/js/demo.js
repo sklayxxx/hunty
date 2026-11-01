@@ -1,17 +1,18 @@
-// Демка: экран и вебки из голоса, указка/карандаш/реакции поверх (синхронно у всех), превью в мини-окне
+// Демка: экран из голоса (вебки — в плитках участников), указка/карандаш/реакции поверх (синхронно у всех), превью в мини-окне
 import { $, $$, R, esc, ic, clamp, prefs, bus, reduce } from './core.js';
 import { api } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, dmPeer, voiceIn } from './state.js';
-import { app, tmsg, tone } from './ui.js';
-import { V } from './voice.js';
+import { app, tmsg, tone, sfx } from './ui.js';
+import { V, setShareQ } from './voice.js';
+import { openMenu } from './menu.js';
 import { HUNTY, stkSrc, stkName } from './stickers.js';
 
-const demoP = $('.pane.demo'), scr = $('.js-screen'), dvid = $('.js-dvid'), dempty = $('.js-dempty');
-const camsEl = $('.js-cams'), ink = $('.js-ink'), pins = $('.js-pins'), fl = $('.js-floaters');
+const stb = $('.js-stb'), scr = $('.js-screen'), dvid = $('.js-dvid');
+const ink = $('.js-ink'), pins = $('.js-pins'), fl = $('.js-floaters');
 const tools = $('.js-tools'), thint = $('.js-thint'), cx2 = ink.getContext('2d');
-const dlive = $('.js-dlive'), dtitle = $('.js-dtitle'), dmeta = $('.js-dmeta'), dtag = $('.js-dtag');
+const dlive = $('.js-dlive'), dmeta = $('.js-dmeta'), dtag = $('.js-dtag'), sw = $('.js-dsw'), dq = $('.js-dq');
 const wav = $('.js-wav'), wtx = $('.js-wtx'), rbar = $('.js-rbar');
-const mini = $('.js-mini'), mscr = $('.js-mscr'), mwho = $('.js-mwho');
+const mini = $('.js-mini'), mscr = $('.js-mscr'), mwho = $('.js-mwho'), mlive = $('.mi-h .live', mini);
 
 /* ---------- кто что показывает ---------- */
 const MED = new Map();          // peer → {cam, scr}
@@ -23,6 +24,8 @@ const room = () => V.room;
 const isDM = () => { const r = S.rooms.get(V.room); return !!(r && r.kind === 'dm'); };
 const sharers = () => order.filter(p => MED.get(p) && MED.get(p).scr);
 const drawOk = p => p === myId() ? V.drawOk !== false : DRAW.get(p) !== false;
+/** чей экран сейчас на сцене (или null) */
+export const focusStream = () => (focus && MED.get(focus) && MED.get(focus).scr) || null;
 
 bus.on('media', (peer, k, st) => {
   const m = MED.get(peer) || {}; m[k] = st || null; MED.set(peer, m);
@@ -33,7 +36,7 @@ bus.on('media', (peer, k, st) => {
       if (focus === peer) { focus = sharers().slice(-1)[0] || ''; manual = false; }
       clearFrom(null, peer);
     }
-    if (st && peer !== myId()) { tmsg('ok', `${nickOf(peer)} показывает экран${drawOk(peer) ? ' · можно рисовать поверх' : ''}`); tone([[523, .06], [659, .06], [784, .1]], .6); }
+    if (st && peer !== myId()) { tmsg('ok', `${nickOf(peer)} показывает экран${drawOk(peer) ? ' · можно рисовать поверх' : ''}`); sfx('streamon', .6); }
   }
   render();
 });
@@ -43,87 +46,58 @@ bus.on('voice', (r) => { if (r === room()) renderWatch(); });
 bus.on('layout', () => { render(); requestAnimationFrame(() => { sizeInk(); redraw(); }); });
 bus.on('panes', () => { sizeInk(); redraw(); });
 bus.on('profile', () => render());
-bus.on('pref', k => { if (k === 'camMirror') renderCams(); });
+bus.on('shareq', () => meta());
 
 /* ---------- отрисовка ---------- */
-const sw = document.createElement('span'); sw.className = 'dsw'; $('.ph', demoP).appendChild(sw);
-const dask = document.createElement('button'); dask.type = 'button'; dask.className = 'gbtn js-dask'; dask.hidden = true;
-$('.btnrow', dempty).appendChild(dask);
-const dcam = $('.js-dcam');
-let fpsTxt = '';
+let fpsTxt = '', hadScr = false;
 export function render() {
   const me = myId(), sh = sharers();
   if (focus && !sh.includes(focus)) focus = sh.slice(-1)[0] || '';
-  const st = focus ? MED.get(focus).scr : null, mine = focus === me;
+  const st = focusStream(), mine = focus === me;
   if (st) { if (dvid.srcObject !== st) { dvid.srcObject = st; fpsTxt = ''; dvid.play().catch(() => {}); } dvid.hidden = false; }
   else { if (dvid.srcObject) dvid.srcObject = null; dvid.hidden = true; }
-  scr.classList.toggle('has-scr', !!st); scr.classList.toggle('mine', mine);
-  const cams = renderCams();
-  dempty.hidden = !!st || cams > 0;
+  // нет экрана — сцена отдаётся плиткам; есть — экран крупно, плитки полоской снизу
+  scr.hidden = !st; stb.classList.toggle('has-scr', !!st); scr.classList.toggle('has-scr', !!st); scr.classList.toggle('mine', mine);
+  if (hadScr !== !!st) { hadScr = !!st; bus.emit('stagevid'); }
   const can = !!st && drawOk(focus);
   tools.hidden = !can; if (!can && scr.dataset.tool !== 'none') setTool('none');
   dlive.hidden = !st; dtag.hidden = !can;
-  dtitle.textContent = st ? 'Демка' : cams ? 'Вебки' : 'Демка';
+  dq.hidden = !(st && mine && V.share);
   meta();
   // переключатель, если показывают несколько
   sw.innerHTML = sh.length > 1 ? sh.map(p => `<button type="button" class="dswb${p === focus ? ' on' : ''}" data-u="${esc(p)}" title="Смотреть демку ${esc(nickOf(p))}"><img alt="" src="${avaOf(p)}">${esc(p === me ? 'ты' : nickOf(p))}</button>`).join('') : '';
-  // пустое состояние
-  const dm = isDM(), peer = dm ? dmPeer(V.room) : '';
-  $('.js-deh').textContent = dm ? 'Демку никто не даёт' : 'Экран никто не показывает';
-  $('.js-des').textContent = dm ? `покажи экран — ${nickOf(peer)} увидит сразу, напрямую, без серверов` : 'Запусти демку — друзья в голосе увидят твой экран и смогут рисовать поверх.';
-  dask.hidden = !dm; if (dm) dask.innerHTML = ic('hand') + 'Попросить у ' + esc(nickOf(peer));
-  if (dcam) dcam.innerHTML = ic(V.cam ? 'video-off' : 'video') + (V.cam ? 'Выключить вебку' : 'Вебка');
-  app.classList.toggle('dmme', dm && !!st && mine);
-  app.classList.toggle('dmpeer', dm && (!!st && !mine || cams > 0));
   renderWatch(); renderMini();
   if (st) requestAnimationFrame(() => { sizeInk(); redraw(); });
 }
 function meta() {
-  const st = focus ? MED.get(focus).scr : null;
-  if (!st) {
-    const n = Object.keys(voiceIn(room())).length;
-    dmeta.textContent = !room() ? 'никто не показывает экран' : isDM() ? `звонок с ${nickOf(dmPeer(V.room))} · пока пусто` : `в голосе ${n} · экран никто не показывает`;
-    return;
-  }
+  const st = focusStream();
+  if (!st) { dmeta.textContent = ''; return; }
   const t = st.getVideoTracks()[0], s = t && t.getSettings ? t.getSettings() : {};
   const h = focus === myId() ? s.height : dvid.videoHeight, fps = focus === myId() ? Math.round(s.frameRate || 0) : fpsTxt;
-  dmeta.textContent = `${focus === myId() ? 'ты' : nickOf(focus)}${h ? ' · ' + h + 'p' : ''}${fps ? ' · ' + fps + ' fps' : ''} · напрямую P2P`;
+  dmeta.textContent = `${focus === myId() ? 'твой экран' : nickOf(focus)}${h ? ' · ' + h + 'p' : ''}${fps ? ' · ' + fps + ' fps' : ''}`;
+  if (!dq.hidden) $('span', dq).textContent = `${s.height || prefs.shareRes || 1080}p · ${Math.round(s.frameRate || prefs.shareFps || 30)}`;
 }
 dvid.addEventListener('resize', meta);
 dvid.addEventListener('loadedmetadata', () => { meta(); sizeInk(); redraw(); });
 sw.addEventListener('click', e => { const b = e.target.closest('[data-u]'); if (!b) return; focus = b.dataset.u; manual = true; strokes = []; pins.innerHTML = ''; render(); });
-dask.addEventListener('click', () => { const p = dmPeer(V.room); if (p) bus.emit('ask', p, 'demo'); });
+// качество своей демки — на лету, без перезапуска
+dq.addEventListener('click', e => {
+  e.stopPropagation();
+  const res = +prefs.shareRes || 1080, fps = +prefs.shareFps || 30;
+  openMenu([
+    { head: 'Качество показа', sub: 'меняется сразу, без перезапуска' },
+    ...[[720, 'для слабого интернета'], [1080, 'чётко'], [1440, 'очень чётко · нужен хороший интернет']].map(([r, d]) => ({ label: r + 'p', sub: d, check: r === res, fn: () => setShareQ(r, fps) })),
+    '-',
+    ...[[15, 'текст, код, презентации'], [30, 'обычно'], [60, 'игры и видео']].map(([f, d]) => ({ label: f + ' fps', sub: d, check: f === fps, fn: () => setShareQ(res, f) })),
+  ], { el: dq });
+});
 // fps у входящей демки — из статистики WebRTC
 setInterval(async () => {
   if (!focus || focus === myId() || dvid.hidden) return;
-  const P = V.peers.get(focus), st = MED.get(focus) && MED.get(focus).scr; if (!P || !st) return;
+  const P = V.peers.get(focus), st = focusStream(); if (!P || !st) return;
   const tid = (st.getVideoTracks()[0] || {}).id;
   try { const rs = await P.pc.getStats(); rs.forEach(x => { if (x.type === 'inbound-rtp' && x.kind === 'video' && (!x.trackIdentifier || x.trackIdentifier === tid) && x.framesPerSecond) fpsTxt = Math.round(x.framesPerSecond); }); meta(); } catch (_) {}
 }, 2000);
-
-/* вебки: свои — зеркально (только у тебя), чужие — как есть */
-function renderCams() {
-  const me = myId();
-  const list = [...MED.entries()].filter(([, m]) => m.cam).map(([p]) => p).sort((a, b) => (a === me ? -1 : b === me ? 1 : 0));
-  const have = new Map($$('.camt', camsEl).map(e => [e.dataset.u, e]));
-  for (const [p, el] of have) if (!list.includes(p)) { const v = $('video', el); v.srcObject = null; el.remove(); }
-  list.forEach((p, i) => {
-    let el = have.get(p);
-    if (!el) {
-      el = document.createElement('div'); el.className = 'camt'; el.dataset.u = p;
-      el.innerHTML = `<video autoplay playsinline muted></video><span class="camtag"></span>`;
-      camsEl.appendChild(el);
-    }
-    const v = $('video', el), st = MED.get(p).cam;
-    if (v.srcObject !== st) { v.srcObject = st; v.play().catch(() => {}); }
-    el.classList.toggle('me', p === me); el.classList.toggle('mir', p === me && prefs.camMirror !== false);
-    $('.camtag', el).textContent = p === me ? 'ты' : nickOf(p);
-    if (camsEl.children[i] !== el) camsEl.insertBefore(el, camsEl.children[i] || null);
-  });
-  camsEl.dataset.n = String(list.length);
-  scr.classList.toggle('has-cams', list.length > 0);
-  return list.length;
-}
 
 /* кто смотрит */
 function renderWatch() {
@@ -153,7 +127,7 @@ function renderMini() {
   const src = st || (camP ? MED.get(camP).cam : null);
   if (src) { if (mvid.srcObject !== src) { mvid.srcObject = src; mvid.play().catch(() => {}); } mvid.hidden = false; }
   else { mvid.srcObject = null; mvid.hidden = true; }
-  mini.classList.toggle('dm', !src);
+  mini.classList.toggle('dm', !src); mlive.hidden = !src;
   mvid.classList.toggle('cam', !st && !!camP);
   const ids = Object.keys(voiceIn(room())); if (!ids.includes(me)) ids.unshift(me);
   mdm.classList.toggle('many', ids.length > 3);
@@ -227,7 +201,7 @@ function placePin(el, b) { const q = toScreen([+el.dataset.x, +el.dataset.y], b)
 function pinAt(p, label, col, from) {
   const el = document.createElement('div'); el.className = 'pin'; el.dataset.x = p[0]; el.dataset.y = p[1]; el.dataset.from = from;
   el.style.setProperty('--pc', col); el.innerHTML = `<i></i><b>${esc(label)}</b>`; pins.appendChild(el); placePin(el, box());
-  tone([[1320, .05]], .5);
+  sfx('tick', .6);
   const L = life(); if (L !== Infinity) setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 450); }, Math.max(2000, L - 600));
   return el;
 }
@@ -321,7 +295,7 @@ function floatEmo(k, who) {
 let rxT = 0;
 rbar.addEventListener('click', e => {
   const b = e.target.closest('.rbtn'); if (!b || !room()) return;
-  floatEmo(b.dataset.r, myNick()); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); tone([[990, .05]], .5);
+  floatEmo(b.dataset.r, myNick()); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); sfx('pop', .5);
   if (Date.now() - rxT > 250) { rxT = Date.now(); send('react', { k: b.dataset.r }); }
 });
 bus.on('ev:react', v => { if (v.room === room() && v.data && HK.has(v.data.k)) floatEmo(v.data.k, nickOf(v.from)); });

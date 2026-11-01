@@ -106,7 +106,7 @@ fn media_protocol(app: AppHandle, path: String, responder: tauri::UriSchemeRespo
         let resp = match decoded {
             Some((mime, body)) => Response::builder()
                 .status(200)
-                .header("Content-Type", if mime.starts_with("image/") { mime.as_str() } else { "application/octet-stream" })
+                .header("Content-Type", if mime.starts_with("image/") || mime.starts_with("video/") || mime.starts_with("audio/") { mime.as_str() } else { "application/octet-stream" })
                 .header("Access-Control-Allow-Origin", "*")
                 .header("Cache-Control", "private, max-age=31536000, immutable")
                 .header("X-Content-Type-Options", "nosniff")
@@ -251,7 +251,7 @@ mod sys {
         if !cfg!(windows) {
             return Ok(false);
         }
-        *KEYS.lock().map_err(|e| e.to_string())? = vks.into_iter().filter(|v| (1..=254).contains(v)).take(16).collect();
+        *KEYS.lock().map_err(|e| e.to_string())? = vks.into_iter().filter(|v| (1..=254).contains(v)).take(48).collect();
         let mut st = STARTED.lock().map_err(|e| e.to_string())?;
         if !*st {
             *st = true;

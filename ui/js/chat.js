@@ -2,14 +2,16 @@
 import { $, $$, R, esc, ic, hm, when, dayLabel, size, plural, reduce, mobile, prefs, setPref, bus, short } from './core.js';
 import { api, openUrl, saveFile, mediaURL, saveMedia, reveal, inTauri } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, colorByNick, isOnline, shownOnline, statusOf, dmPeer, roomName, voiceCount, voiceIn, typers, pushLocal, isFriend, isBlocked } from './state.js';
-import { stkSrc, stkName } from './stickers.js';
+import { stkSrc, stkName, finWrap, addSticker } from './stickers.js';
 import { emo, emoImg, emojiOnly } from './emoji.js';
 import { openPicker } from './picker.js';
 import { renderWs, tabOpened, isPinned } from './tabs.js';
 import { flip, fly, bump, still, SOFT } from './motion.js';
-import { app, tmsg, tone, TONES, toast, openW, closeW, OPEN, fail, notify, winOpen, copyText } from './ui.js';
+import { app, tmsg, tone, TONES, toast, openW, closeW, OPEN, fail, notify, winOpen, copyText, sfx } from './ui.js';
 import { mobURL, MOBKEYS } from './mobs.js';
 import { onCtx, openMenu, ask, selectionIn } from './menu.js';
+import { hallWhy, CUP } from './hof.js';
+import { fxOf, fxChip } from './fxdef.js';
 
 const chatsEl = $('.js-chats'), friendsEl = $('.js-friends'), logsEl = $('.js-logs'), typEl = $('.js-typing'), nochat = $('.js-nochat');
 const chead = $('.js-chead'), cmeta = $('.js-cmeta'), hbtns = $('.js-hbtns');
@@ -18,12 +20,14 @@ let tab = 'chats', Q = '';
 export { renderWs };
 /** править своё сообщение можно 30 секунд после отправки (ядро проверяет то же самое) */
 export const EDIT_MS = 30000;
-export const canEdit = m => !!m && m.from === myId() && m.kind !== 'sticker' && m.kind !== 'sys' && Date.now() - m.ts < EDIT_MS;
+export const canEdit = (m, room = S.cur) => !!m && m.from === myId() && m.kind !== 'sticker' && m.kind !== 'sys' && (Date.now() - m.ts < EDIT_MS || isSelf(room));
+/** «Избранное» — чат с собой (как «Сохранённые» в Telegram) */
+export const isSelf = r => { if (typeof r === 'string') r = S.rooms.get(r); return !!(r && r.kind === 'self'); };
 const STL = { away: 'отошёл', dnd: 'не беспокоить' };
 const logs = new Map();
 
 /* ---------- мелкие шаблоны ---------- */
-export const tileHTML = r => typeof r.pic === 'string' && r.pic.startsWith('data:image/')
+export const tileHTML = r => r.kind === 'self' ? `<span class="tile self" style="--tc:#6f8cff">${ic('bookmark')}</span>` : typeof r.pic === 'string' && r.pic.startsWith('data:image/')
   ? `<span class="tile pic" style="--tc:${esc(r.color || '#7ee2b8')}"><img alt="" src="${esc(r.pic)}" draggable="false"></span>`
   : `<span class="tile" style="--tc:${esc(r.color || '#7ee2b8')}">${esc(((r.name || '?').trim()[0] || '?').toUpperCase())}</span>`;
 export function pdHTML(peer) {
@@ -67,8 +71,8 @@ function lastPreview(r) {
   if (!l) return '<span class="dim">пока пусто — напиши первым</span>';
   if (l.kind === 'sys') return esc(sysText(l));
   const me = l.from === myId();
-  const pre = me ? '<b>ты:</b> ' : r.kind === 'dm' ? '' : `<b>${esc(nickOf(l.from))}:</b> `;
-  const body = l.kind === 'sticker' ? 'стикер · ' + esc(stkName(l.data)) : l.kind === 'image' ? ic('image') + 'картинка' : l.kind === 'file' ? ic('paperclip') + esc((l.data && l.data.name) || 'файл') : emo(esc(plain(l.text)));
+  const pre = r.kind === 'self' ? (l.data && l.data.fwd && l.data.fwd.n ? `<b>${esc(l.data.fwd.n)}:</b> ` : '') : me ? '<b>ты:</b> ' : r.kind === 'dm' ? '' : `<b>${esc(nickOf(l.from))}:</b> `;
+  const body = l.kind === 'sticker' ? 'стикер · ' + esc(stkName(l.data)) : l.kind === 'image' ? ic('image') + 'картинка' : l.kind === 'file' ? (l.data && l.data.clip ? ic('clapperboard') + 'клип' + (l.data.dur ? ' · ' + Math.max(1, Math.round(l.data.dur / 1000)) + ' сек' : '') : ic('paperclip') + esc((l.data && l.data.name) || 'файл')) : emo(esc(plain(l.text)));
   return pre + body;
 }
 /** текст без разметки: для превью, ответов и озвучки (спойлеры не палим) */
@@ -148,6 +152,7 @@ document.addEventListener('keydown', e => {
 bus.on('find', () => { if (S.cur && !winOpen()) { openFind(); return; } setTab('chats'); $('.js-search').focus(); });
 
 /* ---------- шапка чата ---------- */
+const MEDIAB = () => `<button class="ib" data-act="media" title="Клипы и скрины" aria-label="Клипы и скрины">${ic('images')}</button>`;
 export function header() {
   const r = S.rooms.get(S.cur);
   if (!r) { chead.innerHTML = '<span class="pt">Hunty</span>'; cmeta.textContent = 'серверов: 0'; hbtns.innerHTML = ''; return; }
@@ -158,8 +163,14 @@ export function header() {
     cmeta.textContent = ty ? 'печатает…' : shownOnline(p) ? lineOf(p) : 'не в сети · сообщения дойдут, когда появится';
     const inCall = S.myVoice && S.myVoice[0] === r.id;
     hbtns.innerHTML = inCall ? `<button class="ib hang" data-act="hang" title="Положить трубку" aria-label="Положить трубку">${ic('phone-off')}</button>` : `<button class="ib" data-act="call" title="Позвонить" aria-label="Позвонить">${ic('phone')}</button>`;
-    hbtns.innerHTML += `<button class="ib" data-act="find" title="Поиск по переписке (Ctrl+F)" aria-label="Поиск по переписке">${ic('search')}</button><button class="ib" data-prof="${esc(p)}" title="Профиль" aria-label="Профиль">${ic('user-round')}</button>`;
+    hbtns.innerHTML += MEDIAB() + `<button class="ib" data-act="find" title="Поиск по переписке (Ctrl+F)" aria-label="Поиск по переписке">${ic('search')}</button><button class="ib" data-prof="${esc(p)}" title="Профиль" aria-label="Профиль">${ic('user-round')}</button>`;
     input.placeholder = 'Написать @' + nickOf(p);
+  } else if (r.kind === 'self') {
+    cmeta.classList.remove('ty');
+    chead.innerHTML = tileHTML(r) + '<span class="pt">Избранное</span>';
+    cmeta.textContent = 'чат с собой · лежит только у тебя';
+    hbtns.innerHTML = MEDIAB() + `<button class="ib" data-act="find" title="Поиск по избранному (Ctrl+F)" aria-label="Поиск по избранному">${ic('search')}</button>`;
+    input.placeholder = 'Заметка себе…';
   } else {
     cmeta.classList.remove('ty');
     const ms = r.members || [], on = ms.filter(m => m.online).length, vc = voiceCount(r.id);
@@ -167,7 +178,7 @@ export function header() {
     cmeta.textContent = r.pending ? 'ищу участников в сети…' : `${ms.length} ${plural(ms.length, 'участник', 'участника', 'участников')} · в сети ${on}` + (vc ? ` · в голосе ${vc}` : '');
     hbtns.innerHTML = (r.voice ? `<button class="ib" data-act="voice" title="Голосовой канал" aria-label="Голосовой канал">${ic('mic')}</button>` : '') +
       ((r.invite === 'all' || r.admin) ? `<button class="ib" data-act="invite" title="Пригласить" aria-label="Пригласить">${ic('user-round-plus')}</button>` : '') +
-      `<button class="ib" data-act="find" title="Поиск по переписке (Ctrl+F)" aria-label="Поиск по переписке">${ic('search')}</button>` +
+      MEDIAB() + `<button class="ib" data-act="find" title="Поиск по переписке (Ctrl+F)" aria-label="Поиск по переписке">${ic('search')}</button>` +
       `<button class="ib" data-act="gset" title="Настройки группы" aria-label="Настройки группы">${ic('settings')}</button>`;
     input.placeholder = 'Написать в #' + r.name;
   }
@@ -181,6 +192,7 @@ hbtns.addEventListener('click', e => {
   else if (a === 'voice') bus.emit('voice-join', S.cur);
   else if (a === 'invite') openW('gset', { room: S.cur, tab: 'invite' });
   else if (a === 'gset') openW('gset', { room: S.cur });
+  else if (a === 'media') openW('media', { room: S.cur });
   else if (a === 'find') { if (fbar && !fbar.hidden && F.room === S.cur) closeFind(); else openFind(); }
 });
 
@@ -233,7 +245,8 @@ function rpText(rp) {
 function rxHTML(m) {
   const rs = m.reacts || []; if (!rs.length) return '';
   const me = myId();
-  return `<div class="rx">${rs.map(r => `<button type="button" class="rc${r.p.includes(me) ? ' on' : ''}" data-e="${esc(r.e)}" data-k="${esc(r.e)}" title="${esc(r.p.map(nickOf).join(', '))}" aria-label="${esc(r.e)} · ${r.p.length}">${emoImg(r.e, 'emjr')}<b>${r.p.length}</b></button>`).join('')}<button type="button" class="rc add" data-radd="1" title="Добавить реакцию" aria-label="Добавить реакцию">${ic('smile-plus')}</button></div>`;
+  const hw = hallWhy(m, (S.rooms.get(m.room) || {}).kind);
+  return `<div class="rx">${hw ? `<button type="button" class="rc hofc" data-hof="${esc(m.id)}" title="${hw === 'cup' ? 'Друзья отправили это в зал славы' : 'Всем зашло — это в зале славы'}" aria-label="В зале славы">${emoImg(CUP, 'emjr')}<span>зал славы</span></button>` : ''}${rs.map(r => `<button type="button" class="rc${r.p.includes(me) ? ' on' : ''}" data-e="${esc(r.e)}" data-k="${esc(r.e)}" title="${esc(r.p.map(nickOf).join(', '))}" aria-label="${esc(r.e)} · ${r.p.length}">${emoImg(r.e, 'emjr')}<b>${r.p.length}</b></button>`).join('')}<button type="button" class="rc add" data-radd="1" title="Добавить реакцию" aria-label="Добавить реакцию">${ic('smile-plus')}</button></div>`;
 }
 const mediaOf = m => (m.data && m.data.ref ? mediaURL(m.room, m.id) : '');
 function msgEl(m) {
@@ -245,19 +258,24 @@ function msgEl(m) {
     return d;
   }
   const me = m.from === myId(), u = m.from, dt = m.data || {};
-  d.className = 'm' + (m.kind === 'sticker' ? ' stkm' : '') + (mentionsMe(m) ? ' ment' : '') + (m.rp ? ' hasrp' : '') + (me ? ' mine' : '');
+  d.className = 'm' + (m.kind === 'sticker' ? ' stkm' : '') + (mentionsMe(m) ? ' ment' : '') + (m.rp ? ' hasrp' : '') + (me ? ' mine' : '') + (hallWhy(m, (S.rooms.get(m.room) || {}).kind) ? ' hof' : '') + (fxOf(m) ? ' fxm' : '');
   d.dataset.u = u; d.style.setProperty('--c', colorOf(u));
   let body, n = 0;
-  if (m.kind === 'sticker') { const nm = stkName(dt), mob = String(dt.k || '').startsWith('mob:'); body = `<img class="stkimg${mob ? ' px' : ''}" alt="стикер: ${esc(nm)}" title="${esc(nm)}" src="${esc(stkSrc(dt, mediaOf(m)))}" draggable="false">`; }
+  if (m.kind === 'sticker') { const nm = stkName(dt), mob = String(dt.k || '').startsWith('mob:'); const ss = esc(stkSrc(dt, mediaOf(m))); body = finWrap(dt, `<img class="stkimg${mob ? ' px' : ''}" alt="стикер: ${esc(nm)}" title="${esc(nm)}" src="${ss}" draggable="false">`, ss); }
   else if (m.kind === 'image') {
     const src = picSrc(m), w = Math.min(360, +dt.w || 0), wh = w && dt.h ? ` width="${w}" height="${Math.round(w * dt.h / dt.w)}"` : '';
     body = (src ? `<img class="pic" alt="${esc(dt.name || 'картинка')}" src="${esc(src)}"${wh} loading="lazy" decoding="async">` : `<span class="dim">${ic('image')} картинка не докачалась</span>`) + (m.text ? `<span class="cap">${fmt(m.text)}</span>` : '');
+  } else if (m.kind === 'file' && /^video\/(webm|mp4)/.test(dt.mime || '') && (dt.ref || (typeof dt.src === 'string' && dt.src.startsWith('data:video/')))) {
+    // клип прямо в чате: плеер + маленькая кнопка «сохранить»
+    const src = dt.ref ? mediaOf(m) : dt.src;
+    body = `<div class="vclip"><video controls preload="metadata" playsinline src="${esc(src)}#t=0.1"></video><button class="vcl-dl" type="button" data-file="${esc(m.id)}" title="Сохранить ${esc(dt.name || 'клип')} · ${esc(size(dt.size || 0))}" aria-label="Сохранить клип">${ic('download')}</button>${dt.clip ? `<span class="vcl-tag">${ic('clapperboard')}клип${dt.dur ? ' · ' + Math.round(dt.dur / 1000) + ' сек' : ''}</span>` : ''}</div>` + (m.text ? `<span class="cap">${fmt(m.text)}</span>` : '');
   } else if (m.kind === 'file') body = `<button class="file" type="button" data-file="${esc(m.id)}" title="Сохранить"><span class="fic">${ic('file')}</span><span class="fnm"><b>${esc(dt.name || 'файл')}</b><small>${esc(size(dt.size || 0))}</small></span>${ic('download')}</button>` + (m.text ? `<span class="cap">${fmt(m.text)}</span>` : '');
   else body = (n = emojiOnly(m.text)) ? `<span class="jumbo">${emo(esc(String(m.text).trim()))}</span>` : fmt(m.text || '') + linkCards(m.text);
   const rp = m.rp ? `<button type="button" class="rq" data-jump="${esc(m.rp.id)}" title="К сообщению">${m.rp.gone ? `${ic('reply')}<i>сообщение удалено</i>` : `<img class="ava" alt="" src="${avaOf(m.rp.from)}"><b style="--c:${colorOf(m.rp.from)}">${esc(nickOf(m.rp.from))}</b><span>${emo(esc(rpText(m.rp)))}</span>`}</button>` : '';
   const ed = m.edited ? `<small class="ed" title="изменено ${esc(new Date(m.edited).toLocaleString('ru-RU'))}">(изм.)</small>` : '';
-  const fw = dt.fwd ? `<span class="fwd">${ic('forward')}переслано${dt.fwd.n ? ` от <b>${esc(dt.fwd.n)}</b>` : ''}</span>` : '';
-  d.innerHTML = `${rp}<span class="mav" data-u="${esc(u)}"${me ? ' data-me="1"' : ''}><img class="ava" alt="" src="${avaOf(u)}" draggable="false"></span><time class="ct" aria-hidden="true">${hm(dt0)}</time><div class="mb"><div class="mh"><span class="who" data-u="${esc(u)}"${me ? ' data-me="1"' : ''}>${esc(nickOf(u))}</span>${t}</div><div class="tx">${fw}${body}${ed}</div>${rxHTML(m)}</div>`;
+  const fw = !dt.fwd ? '' : isSelf(m.room) && dt.fwd.n ? `<span class="fwd sv">${ic('bookmark')}<b>${esc(dt.fwd.n)}</b>${dt.fwd.room && dt.fwd.room !== m.room && S.rooms.has(dt.fwd.room) ? ' · ' + esc(roomName(dt.fwd.room)) : ''}${dt.fwd.ts ? ' · ' + esc(when(dt.fwd.ts)) : ''}</span>`
+    : `<span class="fwd">${ic('forward')}переслано${dt.fwd.n ? ` от <b>${esc(dt.fwd.n)}</b>` : ''}</span>`;
+  d.innerHTML = `${rp}<span class="mav" data-u="${esc(u)}"${me ? ' data-me="1"' : ''}><img class="ava" alt="" src="${avaOf(u)}" draggable="false"></span><time class="ct" aria-hidden="true">${hm(dt0)}</time><div class="mb"><div class="mh"><span class="who" data-u="${esc(u)}"${me ? ' data-me="1"' : ''}>${esc(nickOf(u))}</span>${t}</div><div class="tx">${fw}${body}${ed}${fxChip(m)}</div>${rxHTML(m)}</div>`;
   return d;
 }
 /** превью ссылок: картинки по прямой ссылке и YouTube — грузятся только у того, кто включил «Превью ссылок» */
@@ -285,16 +303,20 @@ function logOf(room) {
   if (!l) {
     l = document.createElement('div'); l.className = 'log'; l.dataset.chat = room; l.setAttribute('role', 'log'); l.hidden = true;
     logsEl.appendChild(l); logs.set(room, l);
-    l.addEventListener('scroll', () => { if (l.scrollTop < 60) loadOlder(room); }, { passive: true });
+    l.addEventListener('scroll', () => { l._stick = atBottom(l); if (l.scrollTop < 60) loadOlder(room); }, { passive: true });
   }
   return l;
 }
+// сцена звонка/композер меняют высоту ленты — кто был внизу, тот внизу и остаётся
+new ResizeObserver(() => { const l = logs.get(S.cur); if (l && !l.hidden && l._stick !== false) toBottom(l); }).observe(logsEl);
 const atBottom = l => l.scrollHeight - l.scrollTop - l.clientHeight < 80;
 export const toBottom = l => { if (l) l.scrollTop = l.scrollHeight; };
 /** начало чата (как в Discord): большая ава, «это начало…» и пара кнопок */
 function motd(r) {
   const d = document.createElement('div'); d.className = 'motd hello';
-  if (r.kind === 'dm') {
+  if (r.kind === 'self') {
+    d.innerHTML = `<span class="mo-av">${tileHTML(r)}</span><h2>Избранное</h2><p>Чат с собой: сохраняй сюда сообщения из любых чатов (наведи на сообщение → «…» → «В избранное»), кидай заметки, ссылки и файлы. Видишь только ты — друзьям сюда не попасть. Править своё можно сколько угодно.</p>`;
+  } else if (r.kind === 'dm') {
     const p = dmPeer(r);
     d.innerHTML = `<img class="mo-av" alt="" src="${avaOf(p)}" data-prof="${esc(p)}"><h2 style="--mc:${esc(colorOf(p))}">${esc(nickOf(p))}</h2><p>Это начало вашей переписки с <b>@${esc(nickOf(p))}</b>. Сообщения идут напрямую от компа к компу и хранятся только у вас двоих.</p><div class="mo-b"><button type="button" class="gbtn sm" data-prof="${esc(p)}">${ic('user-round')}Профиль</button><button type="button" class="gbtn sm" data-mo="call">${ic('phone')}Позвонить</button></div>`;
   } else {
@@ -390,13 +412,14 @@ function cancelReply() { if (!replyTo) return; replyTo = null; renderCbar(); }
 let edT = 0;
 function startEdit(room, m) {
   if (m.from !== myId() || m.kind === 'sticker' || m.kind === 'sys') return;
-  if (!canEdit(m)) { tmsg('warn', 'править можно только 30 секунд после отправки — дальше удали и напиши заново'); return; }
+  if (!canEdit(m, room)) { tmsg('warn', 'править можно только 30 секунд после отправки — дальше удали и напиши заново'); return; }
   replyTo = null;
   editing = { room, id: m.id, kind: m.kind, draft: editing ? editing.draft : input.value, text: m.text || '' };
   editing.ts = m.ts;
   input.value = m.text || ''; autosize(); renderCbar();
   input.focus(); input.setSelectionRange(input.value.length, input.value.length);
-  clearInterval(edT); edT = setInterval(edTick, 250);
+  editing.free = isSelf(room); // в «Избранном» — без отсчёта
+  clearInterval(edT); if (!editing.free) edT = setInterval(edTick, 250);
 }
 /** обратный отсчёт правки: кольцо в полоске над вводом, вышло время — правка отменяется */
 function edTick() {
@@ -428,7 +451,7 @@ async function delMsg(room, m) {
   try { await api('del', { room, id: m.id }); tmsg('ok', 'сообщение удалено у всех'); } catch (e) { fail(e); }
 }
 function mention(peer) { const n = nickOf(peer); const v = input.value; input.value = (v && !/\s$/.test(v) ? v + ' ' : v) + '@' + n + ' '; autosize(); input.focus(); }
-function openPic(src) { $('img', lbox).src = src; lbox.hidden = false; }
+export function openPic(src) { $('img', lbox).src = src; lbox.hidden = false; }
 async function copyPic(src) {
   try {
     const blob = await (await fetch(src)).blob();
@@ -450,7 +473,7 @@ async function saveMsgFile(room, m) {
   } catch (e) { fail(e); }
 }
 /** прыжок к сообщению: если оно старше загруженного — догружаю историю до него */
-async function jump(room, id, ts, q) {
+export async function jump(room, id, ts, q) {
   const find = () => { const l = logs.get(room); return l && $(`.m[data-id="${CSS.escape(id)}"]`, l); };
   let el = find();
   if (!el && room === S.cur) { await loadTo(room, id, ts); el = find(); }
@@ -602,7 +625,7 @@ function renderCbar() {
   if (editing && editing.room === S.cur) {
     cbar.hidden = false; cbar.className = 'cbar js-cbar ed';
     const left = Math.max(0, EDIT_MS - (Date.now() - editing.ts));
-    cbar.innerHTML = `${ic('pencil')}<span class="cb-t">Редактирование <span class="dim"><kbd>Enter</kbd> сохранить · <kbd>Esc</kbd> отмена</span></span><span class="edring js-edring" style="--p:${(left / EDIT_MS * 100).toFixed(1)}" title="сколько секунд ещё можно править"><b class="js-edleft">${Math.ceil(left / 1000)}</b></span><button type="button" class="ib sm" data-cb="x" title="Отменить" aria-label="Отменить">${ic('x')}</button>`;
+    cbar.innerHTML = `${ic('pencil')}<span class="cb-t">Редактирование <span class="dim"><kbd>Enter</kbd> сохранить · <kbd>Esc</kbd> отмена</span></span>${editing.free ? '' : `<span class="edring js-edring" style="--p:${(left / EDIT_MS * 100).toFixed(1)}" title="сколько секунд ещё можно править"><b class="js-edleft">${Math.ceil(left / 1000)}</b></span>`}<button type="button" class="ib sm" data-cb="x" title="Отменить" aria-label="Отменить">${ic('x')}</button>`;
   } else if (replyTo && replyTo.room === S.cur) {
     cbar.hidden = false; cbar.className = 'cbar js-cbar rp';
     cbar.innerHTML = `${ic('reply')}<span class="cb-t">Ответ <b style="color:${colorOf(replyTo.from)}">${esc(nickOf(replyTo.from))}</b><span class="dim"></span></span><button type="button" class="ib sm" data-cb="x" title="Не отвечать · Esc" aria-label="Не отвечать">${ic('x')}</button>`;
@@ -675,14 +698,15 @@ async function send(kind, text, data, reply = takeReply(), from = null) {
 }
 export const sendTo = (room, kind, text, data) => api('send', { room, kind, text, data }).then(m => { pushLocal(m); return m; });
 export function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 168) + 'px'; }
-form.addEventListener('submit', e => {
-  e.preventDefault();
+/** отправить то, что в поле; data — доп. поля (эффект), empty — что слать, если поле пустое */
+export function submitText(data, empty = '') {
   if (editing && editing.room === S.cur) { saveEdit(); return; }
-  const v = input.value.trim(); if (!v || !S.cur) return;
+  const v = input.value.trim() || empty; if (!v || !S.cur || form.hidden) return;
   const fr = input.getBoundingClientRect(), cs = getComputedStyle(input);
   const from = { r: { left: fr.left + parseFloat(cs.paddingLeft), top: fr.top + parseFloat(cs.paddingTop), width: fr.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) }, h: emojiOnly(v) ? `<span class="jumbo">${emo(esc(v))}</span>` : emo(esc(plain(v))) };
-  input.value = ''; autosize(); send('text', v, undefined, takeReply(), from);
-});
+  input.value = ''; autosize(); return send('text', v, data, takeReply(), from);
+}
+form.addEventListener('submit', e => { e.preventDefault(); submitText(); });
 let tyT = 0, tySent = 0;
 function sendTyping(on = true) {
   if (!S.cur) return;
@@ -718,7 +742,7 @@ input.addEventListener('keydown', e => {
 /* ---------- эмодзи и стикеры: один пикер (picker.js) ---------- */
 const emoB = $('.js-emo'), stkB = $('.js-stkb');
 function insertText(t) { input.focus(); if (!document.execCommand('insertText', false, t)) { const a = input.selectionStart, b = input.selectionEnd; input.setRangeText(t, a, b, 'end'); } autosize(); }
-export function sendSticker(dt) { if (!S.cur || form.hidden) return; send('sticker', '', dt); tone([[784, .04], [1046, .06]], .6); }
+export function sendSticker(dt) { if (!S.cur || form.hidden) return; send('sticker', '', dt); sfx('pop', .6); }
 function pick(tab, el) { openPicker({ el, tab, mode: 'insert', onEmoji: insertText, onSticker: sendSticker, onClose: back => { if (back) input.focus(); } }); }
 emoB.addEventListener('click', e => { e.preventDefault(); pick('emoji', emoB); });
 stkB.addEventListener('click', e => { e.preventDefault(); pick('sticker', stkB); });
@@ -775,6 +799,7 @@ logsEl.addEventListener('click', e => {
   const pic = t.closest('img.pic'); if (pic) { openPic(pic.currentSrc || pic.src); return; }
   const fb = t.closest('[data-file]'); if (fb) { const m = findMsg(room, id); if (m) saveMsgFile(room, m); return; }
   const rq = t.closest('.rq[data-jump]'); if (rq) { jump(room, rq.dataset.jump); return; }
+  const hf = t.closest('[data-hof]'); if (hf) { openW('hall', { room, id }); return; }
   const rc = t.closest('.rc[data-e]'); if (rc) { react(room, id, rc.dataset.e); return; }
   const ra = t.closest('[data-radd]'); if (ra) { reactPicker(room, id, ra); return; }
   const qr = t.closest('.mact [data-qr]'); if (qr) { react(room, id, qr.dataset.qr); return; }
@@ -801,10 +826,11 @@ logsEl.addEventListener('pointerover', e => {
   if (!m || m.classList.contains('sys') || mact.parentElement === m || e.pointerType === 'touch') return;
   const log = m.closest('.log'), msg = log && findMsg(log.dataset.chat, m.dataset.id); if (!msg) return;
   const mine = msg.from === myId();
-  const quick = [...new Set([...(prefs.emoRecent || []), ...QUICK])].slice(0, 3);
-  mact.innerHTML = quick.map(x => `<button type="button" class="qr" data-qr="${esc(x)}" title="${esc(x)}">${emoImg(x, 'emjq')}</button>`).join('') + '<i class="msep"></i>' +
+  const quick = [...new Set([...(prefs.emoRecent || []), ...QUICK])].filter(x => x !== CUP).slice(0, 3);
+  const cupT = mine ? 'Кубок за своё не считается' : 'В зал славы · ' + ((S.rooms.get(log.dataset.chat) || {}).kind === 'group' ? 'нужно два кубка' : 'хватит одного кубка');
+  mact.innerHTML = quick.map(x => `<button type="button" class="qr" data-qr="${esc(x)}" title="${esc(x)}">${emoImg(x, 'emjq')}</button>`).join('') + `<button type="button" class="qr cup" data-qr="${CUP}" title="${esc(cupT)}" aria-label="В зал славы">${emoImg(CUP, 'emjq')}</button>` + '<i class="msep"></i>' +
     `<button type="button" data-ma="react" title="Реакция" aria-label="Реакция">${ic('smile-plus')}</button><button type="button" data-ma="reply" title="Ответить" aria-label="Ответить">${ic('reply')}</button>` +
-    (canEdit(msg) ? `<button type="button" data-ma="edit" title="Редактировать · ещё ${Math.ceil((EDIT_MS - Date.now() + msg.ts) / 1000)} сек" aria-label="Редактировать">${ic('pencil')}</button>` : '') +
+    (canEdit(msg, log.dataset.chat) ? `<button type="button" data-ma="edit" title="Редактировать${isSelf(log.dataset.chat) ? '' : ' · ещё ' + Math.ceil((EDIT_MS - Date.now() + msg.ts) / 1000) + ' сек'}" aria-label="Редактировать">${ic('pencil')}</button>` : '') +
     `<button type="button" data-ma="fwd" title="Переслать" aria-label="Переслать">${ic('forward')}</button>` +
     `<button type="button" data-ma="more" title="Ещё" aria-label="Ещё">${ic('ellipsis')}</button>`;
   m.appendChild(mact);
@@ -812,6 +838,20 @@ logsEl.addEventListener('pointerover', e => {
 logsEl.addEventListener('pointerleave', () => mact.remove());
 
 /* ---------- контекстные меню: сообщение, чат в списке и во вкладках ---------- */
+/** чужой «свой» стикер → себе в «Мои» */
+async function keepSticker(m) {
+  const dt = m.data || {};
+  try {
+    let src = typeof dt.src === 'string' && dt.src.startsWith('data:image/') ? dt.src : '';
+    if (!src && dt.ref) {
+      const b = await (await fetch(mediaURL(m.room, m.id))).blob();
+      src = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = no; fr.readAsDataURL(b); });
+    }
+    if (!src) throw new Error('стикер ещё не докачался');
+    await addSticker(src, dt.n || '', dt.fin);
+    tmsg('ok', 'стикер в твоих — смотри в пикере, раздел «Мои»');
+  } catch (e) { fail(e); }
+}
 function msgItems(el) {
   const log = el.closest('.log'); if (!log) return null;
   const room = log.dataset.chat, id = el.dataset.id, m = findMsg(room, id); if (!m) return null;
@@ -819,8 +859,8 @@ function msgItems(el) {
   const sel = selectionIn(el);
   if (m.kind === 'sys') return [sel ? { icon: 'copy', label: 'Копировать', fn: () => copyText(sel) } : null, { icon: 'eye-off', label: 'Удалить у себя', fn: () => hideMsg(room, id) }];
   const mine = new Set((m.reacts || []).filter(x => x.p.includes(myId())).map(x => x.e)), on = e => react(room, id, e);
-  const pic = m.kind === 'image' ? picSrc(m) : '', fav = isFav(m.id), pinned = pinsOf(room).includes(m.id);
-  const quick = [...new Set([...(prefs.emoRecent || []), ...QUICK])].slice(0, 6);
+  const pic = m.kind === 'image' ? picSrc(m) : '', pinned = pinsOf(room).includes(m.id), fw = (m.data || {}).fwd;
+  const quick = [...new Set([...(prefs.emoRecent || []), ...QUICK])].filter(x => x !== CUP).slice(0, 5).concat(CUP);
   return [
     { emojis: quick, active: mine, on, more: () => reactPicker(room, id, el) },
     '-',
@@ -828,13 +868,16 @@ function msgItems(el) {
     { icon: 'forward', label: 'Переслать', fn: () => forward(room, m) },
     sel ? { icon: 'copy', label: 'Копировать выделенное', fn: () => copyText(sel) } : null,
     m.text ? { icon: 'copy', label: 'Копировать текст', kbd: sel ? '' : 'Ctrl+C', fn: () => copyText(m.text) } : null,
-    canEdit(m) ? { icon: 'pencil', label: 'Редактировать', sub: 'ещё ' + Math.ceil((EDIT_MS - Date.now() + m.ts) / 1000) + ' сек', kbd: '↑', fn: () => startEdit(room, m) } : null,
-    { icon: 'bookmark', label: fav ? 'Убрать из избранного' : 'В избранное', fn: () => toggleFav(room, m) },
+    canEdit(m, room) ? { icon: 'pencil', label: 'Редактировать', sub: isSelf(room) ? '' : 'ещё ' + Math.ceil((EDIT_MS - Date.now() + m.ts) / 1000) + ' сек', kbd: '↑', fn: () => startEdit(room, m) } : null,
+    isSelf(room) ? (fw && fw.room && fw.id && S.rooms.has(fw.room) ? { icon: 'reply', label: 'К оригиналу', sub: 'в «' + roomName(fw.room) + '»', fn: () => openChat(fw.room).then(() => setTimeout(() => jump(fw.room, fw.id), 250)) } : null)
+      : { icon: 'bookmark', label: 'В избранное', sub: 'чат с собой', fn: () => toSelf(room, m) },
     r && (r.kind === 'dm' || r.admin) ? { icon: pinned ? 'pin-off' : 'pin', label: pinned ? 'Открепить сообщение' : 'Закрепить сообщение', fn: () => pinMsg(room, m, !pinned) } : null,
     pic ? '-' : null,
     pic ? { icon: 'maximize-2', label: 'Открыть картинку', fn: () => openPic(pic) } : null,
     pic ? { icon: 'download', label: 'Сохранить картинку', fn: () => saveMsgFile(room, m) } : null,
     pic ? { icon: 'images', label: 'Копировать картинку', fn: () => copyPic(pic) } : null,
+    pic ? { icon: 'scissors', label: 'Сделать стикер', sub: 'вырезать и обвести', fn: () => bus.emit('stkmake', { src: pic, name: '' }) } : null,
+    m.kind === 'sticker' && (m.data || {}).k === 'my' && !me ? { icon: 'star', label: 'В мои стикеры', sub: 'будет в пикере у тебя', fn: () => keepSticker(m) } : null,
     m.kind === 'file' ? { icon: 'download', label: 'Сохранить файл', fn: () => saveMsgFile(room, m) } : null,
     '-',
     !me ? { icon: 'at-sign', label: 'Упомянуть', fn: () => mention(m.from) } : null,
@@ -886,45 +929,47 @@ pinbar.addEventListener('click', e => {
   jump(S.cur, b.dataset.pin); const n = pinsOf(S.cur).length; if (n > 1) { pinI = (pinI + 1) % n; renderPinbar(); }
 });
 
-/* ---------- избранное: копии сообщений лежат только у тебя ---------- */
-const favs = () => prefs.favs || [];
-export const isFav = id => favs().some(f => f.id === id);
-function toggleFav(room, m) {
-  if (isFav(m.id)) { setPref('favs', favs().filter(f => f.id !== m.id)); tmsg('ok', 'убрано из избранного'); }
-  else {
-    const dt = m.data || {}, small = !(dt.src && String(dt.src).length > 30000);
-    setPref('favs', [{ id: m.id, room, from: m.from, nick: nickOf(m.from), ts: m.ts, kind: m.kind, text: m.text || '', data: small ? dt : { name: dt.name, size: dt.size }, at: Date.now() }, ...favs()].slice(0, 300));
-    toast({ icon: 'bookmark', title: 'Сохранено в избранное', sub: 'лежит только у тебя · открыть — меню профиля внизу слева', dur: 3500, actions: [{ label: 'Открыть', cls: 'gbtn', fn: () => openW('favs') }] });
-  }
-  bus.emit('favs');
+/* ---------- Избранное: чат с собой, лежит только у тебя (ядро никому его не отправляет) ---------- */
+let selfId = '';
+export async function selfRoom() {
+  if (selfId && S.rooms.has(selfId)) return selfId;
+  for (const r of S.rooms.values()) if (r.kind === 'self') return (selfId = r.id);
+  const r = await api('self_open');
+  if (r && r.id) { if (!S.rooms.has(r.id)) S.rooms.set(r.id, r); selfId = r.id; renderChats(); }
+  return selfId;
 }
-/* окно «Избранное»: поиск, открыть в чате, убрать */
-const favW = $('.win[data-win="favs"]');
-function favHTML(f) {
-  const body = f.kind === 'sticker' ? `<img class="fv-stk" alt="" src="${esc(stkSrc(f.data || {}))}">`
-    : f.kind === 'image' ? `<span class="fv-k">${ic('image')}картинка</span>${f.text ? ' ' + fmt(f.text) : ''}`
-    : f.kind === 'file' ? `<span class="fv-k">${ic('file')}${esc((f.data && f.data.name) || 'файл')}</span>`
-    : fmt(f.text || '');
-  const rn = S.rooms.has(f.room) ? roomName(f.room) : 'чат удалён';
-  return `<div class="fv" data-fv="${esc(f.id)}"><img class="ava" alt="" src="${avaOf(f.from)}"><div class="fv-b"><div class="fv-h"><b style="color:${esc(colorOf(f.from))}">${esc(f.nick || nickOf(f.from))}</b><span>${esc(rn)} · ${esc(when(f.ts))}</span></div><div class="fv-t">${body}</div></div><div class="fv-a"><button type="button" class="ib sm" data-fvgo="${esc(f.id)}" title="Открыть в чате"${S.rooms.has(f.room) ? '' : ' disabled'}>${ic('arrow-right')}</button><button type="button" class="ib sm" data-fvcp="${esc(f.id)}" title="Копировать текст">${ic('copy')}</button><button type="button" class="ib sm no" data-fvdel="${esc(f.id)}" title="Убрать из избранного">${ic('x')}</button></div></div>`;
+export async function openSelf() { try { const id = await selfRoom(); if (id) await openChat(id, { focus: true }); } catch (e) { fail(e); } }
+async function toSelf(room, m) {
+  if (m.data && m.data.ref) { tmsg('warn', 'этот файл ещё не докачался — сохранить не выйдет'); return; }
+  try {
+    const id = await selfRoom(); if (!id) return;
+    await sendTo(id, m.kind, m.text || '', { ...(m.data || {}), fwd: { n: nickOf(m.from), p: m.from, ts: m.ts, room, id: m.id } });
+    toast({ icon: 'bookmark', title: 'Сохранено в Избранное', sub: 'это чат с собой — видишь только ты', dur: 3500, actions: [{ label: 'Открыть', cls: 'gbtn', fn: () => openChat(id, { focus: true }) }] });
+    bus.emit('fav-saved', m);
+  } catch (e) { fail(e); }
 }
-function renderFavs() {
-  const q = $('.js-favq', favW).value.trim().toLowerCase(), all = favs();
-  const list = q ? all.filter(f => (f.text || '').toLowerCase().includes(q) || (f.nick || '').toLowerCase().includes(q)) : all;
-  $('.js-favsub', favW).textContent = all.length ? `${all.length} ${plural(all.length, 'сообщение', 'сообщения', 'сообщений')} · лежат только у тебя` : 'сохранённые сообщения · лежат только у тебя';
-  $('.js-favl', favW).innerHTML = list.length ? list.map(favHTML).join('')
-    : `<div class="fv-empty">${ic('bookmark')}<b>${all.length ? 'Ничего не нашлось' : 'Пока пусто'}</b><span>${all.length ? 'попробуй другое слово' : 'наведи на сообщение → «…» → «В избранное». Копия ляжет сюда и не пропадёт, даже если чат почистят.'}</span></div>`;
+/** раньше избранное лежало в настройках — один раз переносим в чат с собой */
+let moving = false;
+async function moveFavs() {
+  const old = prefs.favs || [];
+  if (moving || prefs.favsMoved || !S.me || !S.link) return;
+  if (!old.length) { setPref('favsMoved', true); return; }
+  moving = true;
+  try {
+    const id = await selfRoom(); if (!id) return;
+    for (const f of old.slice().reverse()) {
+      const dt = { ...(f.data || {}) }, fwd = { n: f.nick || nickOf(f.from), p: f.from, ts: f.ts, room: f.room, id: f.id };
+      let kind = f.kind || 'text', text = f.text || '';
+      // большие картинки и файлы в старое избранное не влезали — переносим подписью
+      if ((kind === 'image' && !dt.src) || (kind === 'file' && !dt.src && !dt.ref)) { text = (kind === 'image' ? '🖼 картинка' : '📎 ' + (dt.name || 'файл')) + (text ? ' · ' + text : ''); kind = 'text'; }
+      try { await api('send', { room: id, kind, text, data: kind === 'text' ? { fwd } : { ...dt, fwd } }); } catch (_) {}
+    }
+    setPref('favsMoved', true); setPref('favs', []);
+    toast({ icon: 'bookmark', title: 'Избранное переехало', sub: `теперь это чат с собой · перенёс ${old.length} ${plural(old.length, 'сообщение', 'сообщения', 'сообщений')}`, dur: 6000, actions: [{ label: 'Открыть', cls: 'gbtn', fn: () => openChat(id, { focus: true }) }] });
+  } catch (_) {} finally { moving = false; }
 }
-OPEN.favs = () => { $('.js-favq', favW).value = ''; renderFavs(); };
-$('.js-favq', favW).addEventListener('input', renderFavs);
-favW.addEventListener('click', e => {
-  const g = e.target.closest('[data-fvgo]'), c = e.target.closest('[data-fvcp]'), d = e.target.closest('[data-fvdel]');
-  const f = g || c || d ? favs().find(x => x.id === (g || c || d).dataset[g ? 'fvgo' : c ? 'fvcp' : 'fvdel']) : null; if (!f) return;
-  if (g) { closeW(true); openChat(f.room, { focus: false }).then(() => setTimeout(() => jump(f.room, f.id), 250)); }
-  else if (c) copyText(f.text || '').then(() => tmsg('ok', 'текст скопирован'));
-  else { setPref('favs', favs().filter(x => x.id !== f.id)); const el = d.closest('.fv'); el.classList.add('bye'); setTimeout(renderFavs, 220); bus.emit('favs'); }
-});
-bus.on('favs', () => { if (winOpen() === 'favs') renderFavs(); });
+bus.on('link', () => setTimeout(moveFavs, 2500));
+bus.on('me', () => setTimeout(moveFavs, 2500));
 async function setMuted(id, on) {
   try {
     const j = await api('room_update', { room: id, muted: on }); if (j && j.id) S.rooms.set(j.id, j);
@@ -964,6 +1009,7 @@ export function chatItems(id) {
       S.cur !== id ? { icon: 'message-circle', label: 'Открыть чат', fn: () => openChat(id, { focus: true }) } : null,
       { icon: 'user-round', label: 'Профиль', fn: () => bus.emit('open-profile', p) },
       { icon: 'phone', label: 'Позвонить', disabled: !fr || bl, fn: async () => { await openChat(id); bus.emit('call', id); } },
+      { icon: 'film', label: 'Клипы и скрины', fn: () => openW('media', { room: id }) },
       '-', ...common, '-',
       { icon: 'at-sign', label: 'Копировать ник', fn: () => copyText('@' + nickOf(p)).then(() => tmsg('ok', 'ник скопирован')) },
       { icon: 'copy', label: 'Копировать ID', fn: () => copyText(p).then(() => tmsg('ok', 'ID скопирован')) },
@@ -973,6 +1019,14 @@ export function chatItems(id) {
       { icon: 'ban', label: bl ? 'Разблокировать' : 'Заблокировать', danger: !bl, fn: () => bus.emit(bl ? 'unblock' : 'block', p) },
     ];
   }
+  if (r.kind === 'self') return [
+    { head: 'Избранное', sub: 'чат с собой · видишь только ты' },
+    S.cur !== id ? { icon: 'message-circle', label: 'Открыть', fn: () => openChat(id, { focus: true }) } : null,
+    { icon: pin ? 'pin-off' : 'pin', label: pin ? 'Открепить чат' : 'Закрепить чат', fn: () => togglePin(id) },
+    { icon: 'film', label: 'Клипы и скрины', fn: () => openW('media', { room: id }) },
+    '-',
+    { icon: 'eraser', label: 'Очистить избранное', danger: true, fn: () => clearRoom(id) },
+  ];
   const n = (r.members || []).length;
   return [
     { head: r.name || 'группа', sub: r.pending ? 'ищу участников…' : `${n} ${plural(n, 'участник', 'участника', 'участников')}` },
@@ -980,6 +1034,7 @@ export function chatItems(id) {
     r.voice && !r.pending ? { icon: 'mic', label: 'Зайти в голос', fn: () => bus.emit('voice-join', id) } : null,
     (r.invite === 'all' || r.admin) && !r.pending ? { icon: 'user-round-plus', label: 'Пригласить', fn: () => openW('gset', { room: id, tab: 'invite' }) } : null,
     { icon: 'settings', label: 'Настройки группы', fn: () => openW('gset', { room: id }) },
+    { icon: 'film', label: 'Клипы и скрины', fn: () => openW('media', { room: id }) },
     '-', ...common, '-',
     { icon: 'eraser', label: 'Очистить историю', danger: true, fn: () => clearRoom(id) },
     { icon: 'log-out', label: 'Покинуть группу', danger: true, fn: () => leaveGroup(id) },
@@ -1030,7 +1085,7 @@ bus.on('msg', async (room, m) => {
   renderChats(); if (room === S.cur) renderTyping();
   if (m.from === myId() || m.kind === 'sys' || isBlocked(m.from)) return;
   const ment = mentionsMe(m), seeing = room === S.cur && document.hasFocus() && !document.hidden;
-  if (seeing) { tone(TONES.msg, .45); return; }
+  if (seeing) { sfx('msg', .45); return; }
   if (r && r.muted && !ment) return;
   if (r && r.kind === 'group' && prefs.mentionsOnly && !ment) return;
   notify({ tone: ment ? 'mention' : 'msg', say: `${nickOf(m.from)} ${ment ? 'зовёт тебя' : 'пишет'}${r && r.kind === 'group' ? ' в ' + r.name : ''}` });

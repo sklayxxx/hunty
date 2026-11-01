@@ -17,6 +17,11 @@ import { renderOnline, renderPanel } from './me.js';
 import './board.js';
 import './micfix.js';
 import './system.js';
+import './keys.js';
+import './clips.js';
+import './fame.js';
+import './stkmake.js';
+import './fx.js';
 import { onboard } from './onboard.js';
 import { steveAPI } from './afk.js';
 import { egg, eggsText } from './eggs.js';
@@ -87,6 +92,7 @@ function render() {
   if (last) openChat(last); else showEmpty();
   layout(); renderOnline(); renderPanel(); title(); refreshCode().catch(() => {});
   checkWaiting(); // друг ждёт в звонке, пока меня не было
+  bus.emit('ready');
 }
 
 /* ---------- мелочи в шапке: счётчик «в сети» — в me.js ---------- */

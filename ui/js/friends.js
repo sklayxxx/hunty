@@ -2,7 +2,7 @@
 import { $, $$, esc, ic, short, when, prefs, setPref, bus, plural } from './core.js';
 import { api } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, isOnline, isFriend, isBlocked, dmOf, voiceIn, roomName, profileOf, shownOnline, statusOf } from './state.js';
-import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, notify, winOpen, rgv, copyText } from './ui.js';
+import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, notify, winOpen, rgv, copyText, sfx } from './ui.js';
 import { reqRow, renderLists, openChat, pdHTML, tileHTML } from './chat.js';
 import { cardHTML } from './card.js';
 import { mobName } from './mobs.js';
@@ -234,6 +234,6 @@ bus.on('presence', (p, on, was) => {
   const f = S.friends.get(p);
   renderLists();
   if (!f || f.state !== 'friend' || on === was) return;
-  if (on && prefs.friendOnline && Date.now() - (seenOnline.get(p) || 0) > 10 * 60000 && performance.now() > 15000) { tmsg('ok', `${nickOf(p)} в сети`); tone([[659, .04], [880, .06]], .5); }
+  if (on && prefs.friendOnline && Date.now() - (seenOnline.get(p) || 0) > 10 * 60000 && performance.now() > 15000) { tmsg('ok', `${nickOf(p)} в сети`); sfx('online'); }
   if (on) seenOnline.set(p, Date.now());
 });

@@ -2,12 +2,12 @@
 // счётчик «друзья в сети» сверху слева; авто-«отошёл» после 10 минут без активности.
 import { $, $$, esc, ic, prefs, setPref, bus, plural } from './core.js';
 import { api } from './api.js';
-import { S, myId, myNick, avaOf, statusOf, shownOnline } from './state.js';
+import { S, myId, myNick, nickOf, avaOf, statusOf, shownOnline } from './state.js';
 import { tmsg, tone, openW, fail, copyText } from './ui.js';
 import { openMenu } from './menu.js';
 import { V, toggleMic, toggleDeaf } from './voice.js';
 import { FX, fxName } from './audio.js';
-import { setTab } from './chat.js';
+import { setTab, openSelf } from './chat.js';
 import { bump } from './motion.js';
 
 export const STATUS = {
@@ -43,7 +43,7 @@ export function statusItems() {
     { icon: 'pencil', label: p.line ? 'Сменить статус' : 'Написать статус', sub: p.line ? '«' + p.line + '»' : 'чем занят — видят друзья', fn: () => openW('settings', { tab: 'acc', focus: '.js-statusinp' }) },
     p.line ? { icon: 'eraser', label: 'Убрать статус', fn: () => api('profile_set', { line: '' }).catch(fail) } : null,
     { icon: 'user-round', label: 'Мой профиль', fn: () => bus.emit('open-profile', myId()) },
-    { icon: 'bookmark', label: 'Избранное', fn: () => openW('favs') },
+    { icon: 'bookmark', label: 'Избранное', sub: 'чат с собой', fn: () => openSelf() },
     '-',
     { icon: 'at-sign', label: 'Копировать ник', fn: () => copyText('@' + myNick()).then(() => tmsg('ok', 'ник скопирован')) },
   ];
@@ -81,7 +81,32 @@ function micMenu() {
     { icon: 'settings', label: 'Настройки голоса', fn: () => openW('settings', { tab: 'audio' }) },
   ];
 }
-$('.js-mefav').addEventListener('click', () => openW('favs'));
+function deafMenu() {
+  return [
+    { head: 'Звук', sub: V.deaf ? 'выключен — ты никого не слышишь' : 'включён' },
+    { icon: 'headphones', label: 'Устройство вывода', items: devItems('audiooutput', 'outId') },
+    { label: 'Громкость звука', icon: 'volume-2', range: { min: 0, max: 100, step: 1, value: prefs.outVol ?? 100, on: v => setPref('outVol', v) } },
+    '-',
+    { icon: 'settings', label: 'Настройки звука', fn: () => openW('settings', { tab: 'audio' }) },
+  ];
+}
+let devs = [];
+async function loadDevs() { try { devs = await navigator.mediaDevices.enumerateDevices(); } catch (_) { devs = []; } }
+function devItems(kind, pref) {
+  const list = devs.filter(d => d.kind === kind && d.deviceId !== 'communications');
+  const cur = prefs[pref] || '';
+  const name = d => (d.deviceId === 'default' ? 'Как в системе' : (d.label || 'Устройство').replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)$/i, ''));
+  const items = list.map(d => ({ label: name(d), check: (cur || 'default') === d.deviceId || (!cur && d.deviceId === 'default'), fn: () => { setPref(pref, d.deviceId === 'default' ? '' : d.deviceId); tmsg('ok', (kind === 'audioinput' ? 'мик: ' : 'звук: ') + name(d)); } }));
+  return items.length ? items : [{ label: 'Устройств не видно — дай доступ к мику', disabled: true }];
+}
+async function openDevMenu(el, which) { await loadDevs(); openMenu(which === 'mic' ? micMenu() : deafMenu(), { el }); }
+micB.addEventListener('click', () => { toggleMic(); bump(micB, 1.12); });
+deafB.addEventListener('click', () => { toggleDeaf(); bump(deafB, 1.12); });
+$('.js-memicx').addEventListener('click', e => openDevMenu(e.currentTarget, 'mic'));
+$('.js-medeafx').addEventListener('click', e => openDevMenu(e.currentTarget, 'out'));
+micB.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); openDevMenu(micB, 'mic'); });
+deafB.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); openDevMenu(deafB, 'out'); });
+$('.js-mefav').addEventListener('click', () => openSelf());
 
 /* ---------- отрисовка ---------- */
 export function renderPanel() {
@@ -102,12 +127,16 @@ bus.on('me', renderPanel); bus.on('selfstate', renderPanel); bus.on('voice', ren
 /* ---------- сверху слева: зелёная точка и «в сети 1/4» ---------- */
 const onl = $('.js-onl');
 export function renderOnline() {
-  const fr = [...S.friends.values()].filter(f => f.state === 'friend'), on = fr.filter(f => shownOnline(f.peer)).length;
-  const d = $('.js-onld'), n = $('.js-onln'), prev = n.textContent;
-  if (!S.link) { d.className = 'pd dnd js-onld'; n.textContent = 'нет связи'; onl.title = 'нет связи с ядром Hunty — переподключаюсь'; return; }
+  const fr = [...S.friends.values()].filter(f => f.state === 'friend'), onF = fr.filter(f => shownOnline(f.peer)), on = onF.length;
+  const d = $('.js-onld'), n = $('.js-onln'), av = $('.js-onlav'), prev = n.textContent;
+  if (!S.link) { d.className = 'pd dnd js-onld'; n.textContent = 'нет связи'; av.innerHTML = ''; onl.title = 'нет связи с ядром Hunty — переподключаюсь'; return; }
   d.className = 'pd js-onld ' + (on ? 'on' : 'off');
   n.textContent = fr.length ? `${on}/${fr.length}` : '0';
-  onl.title = fr.length ? `друзей в сети: ${on} из ${fr.length} · клик — список` : 'друзей пока нет — добавь кого-нибудь';
+  // до трёх аватарок тех, кто в сети — сразу видно, кто тут
+  const sig = onF.slice(0, 3).map(f => f.peer + avaOf(f.peer)).join('|');
+  if (av.dataset.s !== sig) { av.dataset.s = sig; av.innerHTML = onF.slice(0, 3).map(f => `<img alt="" src="${avaOf(f.peer)}">`).join(''); }
+  onl.classList.toggle('hasav', on > 0);
+  onl.title = fr.length ? `друзей в сети: ${on} из ${fr.length}${on ? ' — ' + onF.slice(0, 6).map(f => nickOf(f.peer)).join(', ') + (on > 6 ? '…' : '') : ''} · клик — список` : 'друзей пока нет — добавь кого-нибудь';
   onl.setAttribute('aria-label', onl.title);
   if (prev && prev !== n.textContent && prev !== '…') bump(n, 1.25);
 }

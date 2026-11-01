@@ -292,7 +292,7 @@ bus.on('pref', k => {
   }
 });
 
-/* ---------- саундборд: свои звуки синтезом (без чужих файлов) + свои файлы (IndexedDB) ---------- */
+/* ---------- саундборд: встроенные — CC0-файлы (ui/sfx/sb-*.ogg, см. docs/SOUNDS.md), синтез — запасной; свои файлы — в IndexedDB ---------- */
 export const SB = [
   { id: 'horn', e: '1f4ef', name: 'Дудка' },
   { id: 'drum', e: '1f941', name: 'Ба-дум-тсс' },
@@ -302,7 +302,12 @@ export const SB = [
   { id: 'laser', e: '1f52b', name: 'Пиу-пиу' },
   { id: 'win', e: '1f3c6', name: 'Победа' },
   { id: 'cricket', e: '1f997', name: 'Сверчки' },
+  { id: 'roll', e: '1fa98', name: 'Барабанная дробь' },
+  { id: 'ding', e: '1f6ce', name: 'Верно!' },
+  { id: 'buzz', e: '274c', name: 'Мимо' },
+  { id: 'laugh', e: '1f608', name: 'Злодейский смех' },
 ];
+const SBF = new Set(SB.map(s => s.id));
 const noiseBuf = (oc, sec) => { const n = Math.round(oc.sampleRate * sec), b = oc.createBuffer(1, n, oc.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return b; };
 const env = (g, t, a, peak, d) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); };
 const SYN = {
@@ -400,7 +405,10 @@ export async function sbDel(id) {
 function sbBuf(ctx, id) {
   if (!sbCache.has(id)) {
     sbCache.set(id, (async () => {
-      if (SYN[id]) return synthBuf(id, ctx.sampleRate);
+      if (SBF.has(id)) {
+        try { const r = await fetch('sfx/sb-' + id + '.ogg'); if (r.ok) return await ctx.decodeAudioData(await r.arrayBuffer()); } catch (_) {}
+        return SYN[id] ? synthBuf(id, ctx.sampleRate) : null;
+      }
       const bytes = await idb.get('sb:' + id); if (!bytes) return null;
       return ctx.decodeAudioData(bytes.slice(0));
     })().catch(e => { console.warn('sb', e); sbCache.delete(id); return null; }));

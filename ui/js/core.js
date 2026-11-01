@@ -50,6 +50,8 @@ export const PDEF = {
   tabs: [], emoRecent: [], stkRecent: [], favs: [], font: 'soft', wall: '', wallBlur: 24, wallDim: 55,
   selfMute: false, selfDeaf: false, nsMode: 'rnnoise', fx: '', linkPrev: true, awayAfter: 10, autoAway: false,
   pttKey: '', pttGlobal: false, sbVol: 70, gameScan: true, msgSize: 15,
+  // v0.4
+  keys: {}, earGuard: true, sfxOff: {}, hallSeen: 0, favsMoved: false, fxMsg: true, clipSec: 30, clips: true,
 };
 export const prefs = Object.assign({}, PDEF);
 try { const o = JSON.parse(localStorage.getItem('hunty-prefs') || '{}'); Object.assign(prefs, o); if (o.ns === false && !o.nsMode) prefs.nsMode = 'off'; } catch (_) {}

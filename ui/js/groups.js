@@ -1,7 +1,7 @@
 // Группы: создать, настройки, инвайт с QR, вступить по ссылке
 import { $, $$, esc, ic, short, plural, bus } from './core.js';
 import { api } from './api.js';
-import { S, myId, nickOf, avaOf, isOnline, roomName } from './state.js';
+import { S, myId, myNick, nickOf, avaOf, isOnline, roomName } from './state.js';
 import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, segSet, segGet, winOpen } from './ui.js';
 import { openChat, renderLists, header, tileHTML, leaveGroup, pdHTML, lineOf } from './chat.js';
 import { shrinkImage } from './card.js';
@@ -60,7 +60,8 @@ $('.js-gpic', gw).addEventListener('click', () => {
   if (gpic) { gpic = ''; gTile(); tmsg('ok', 'картинка убрана · будет буква'); return; }
   pickGroupPic($('.js-gpicf', gw), u => { gpic = u; gTile(); bump(gtile); });
 });
-OPEN.group = (_, o) => { picked.clear(); gpic = ''; gq.value = ''; if (o.with) picked.add(o.with); gname.value = ''; segSet($('.js-gcol', gw), ['#7ee2b8', '#9db7ff', '#ffb36b', '#ff94b8', '#63e6ff', '#ffd36b', '#d6a8ff', '#ff9f8f'][Math.floor(Math.random() * 8)]); gTile(); renderPick(); };
+let fromCall = '';
+OPEN.group = (_, o) => { picked.clear(); gpic = ''; gq.value = ''; if (o.with) picked.add(o.with); fromCall = o.fromCall || ''; gname.value = fromCall && o.with ? `${myNick()}, ${nickOf(o.with)}` : ''; segSet($('.js-gcol', gw), ['#7ee2b8', '#9db7ff', '#ffb36b', '#ff94b8', '#63e6ff', '#ffd36b', '#d6a8ff', '#ff9f8f'][Math.floor(Math.random() * 8)]); gTile(); renderPick(); };
 $('.js-gcreate', gw).addEventListener('click', async () => {
   const name = gname.value.trim();
   if (!name) { gname.focus(); gname.classList.remove('shake'); void gname.offsetWidth; gname.classList.add('shake'); tmsg('warn', 'назови группу'); return; }
@@ -68,9 +69,19 @@ $('.js-gcreate', gw).addEventListener('click', async () => {
     const r = await api('room_create', { name, color: gcolor(), members: [...picked], voice: true, invite: segGet($('.js-ginv', gw)) || 'all', ...(gpic ? { pic: gpic } : {}) });
     const room = r.room || r; S.rooms.set(room.id, room);
     closeW(true); renderLists(); openChat(room.id, { focus: true });
+    if (fromCall) moveCall(fromCall, room.id, [...picked]);
     tmsg('ok', `группа «${name}» создана · ты админ${picked.size ? ' · приглашения ушли ' + picked.size + ' ' + plural(picked.size, 'другу', 'друзьям', 'друзьям') : ''}`); tone(TONES.friend);
   } catch (e) { fail(e); }
 });
+
+/** звонок в личке → группа: друг из лички переезжает сам (ev move), остальных зову */
+async function moveCall(dm, to, picks) {
+  const r = S.rooms.get(dm), peer = r && r.kind === 'dm' ? (r.members || []).map(m => m.peer).find(p => p !== myId()) : '';
+  api('ev', { room: dm, kind: 'move', data: { to } }).catch(() => {});
+  bus.emit('voice-join', to);
+  await new Promise(ok => setTimeout(ok, 1500));
+  for (const p of picks) if (p !== peer) api('ev', { room: to, kind: 'gather', data: { you: p } }).catch(() => {});
+}
 
 /* ---------- вступить по инвайту ---------- */
 const jw = $('.win[data-win="join"]'), jst = $('.js-jst', jw), jcode = $('.js-jcode', jw);

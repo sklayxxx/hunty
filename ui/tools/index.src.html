@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="css/proto.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/v3.css">
+<link rel="stylesheet" href="css/v4.css">
 </head>
 <body>
 {{SPRITE}}
@@ -24,20 +25,14 @@
   <header class="top">
     <div class="island glass lq brand">
       <button class="logo js-logo" type="button" aria-label="Hunty">{{LOGO}}<span class="wm">Hunty</span></button>
-      <button class="onl js-onl" type="button" title="Друзья в сети"><i class="pd on js-onld" aria-hidden="true"></i><b class="js-onln">…</b></button>
+      <button class="onl js-onl" type="button" title="Друзья в сети"><span class="onl-av js-onlav" aria-hidden="true"></span><i class="pd on js-onld" aria-hidden="true"></i><b class="js-onln">…</b></button>
     </div>
     <nav class="island glass lq nav js-nav" aria-label="Открытые чаты">
       <button class="ws plus" data-win="group" title="Создать группу" aria-label="Создать группу">{{I:plus}}</button>
       <button class="vjoin js-vjoin" type="button" hidden></button>
     </nav>
-    <div class="island glass lq vbar" role="group" aria-label="Голос">
-      <span class="live"><i></i>в голосе</span>
-      <b class="vb-ch js-vbch">—</b>
-      <span class="sep" aria-hidden="true">{{I:users}}</span><span class="js-vcount">0/6</span>
-      <span class="sep" aria-hidden="true">{{I:clock}}</span><span class="js-up">00:00</span>
-      <span class="vb-sp"></span>
-      <span class="vb-srv">серверов: <b>0</b></span>
-      <button class="tbtn js-vmin" type="button" title="Свернуть в мини-окно" aria-label="Свернуть звонок">{{I:minimize-2}}</button>
+    <div class="island glass lq fame">
+      <button class="hallb js-hallb" type="button" title="Зал славы · лучшие моменты" aria-label="Зал славы">{{I:trophy}}<span class="hb-n js-halln" hidden>0</span></button>
     </div>
   </header>
 
@@ -114,46 +109,49 @@
       <div class="phint"><kbd>Enter</kbd> отправить<span class="dot"></span><kbd>Shift+Enter</kbd> новая строка<span class="ph-x"><span class="dot"></span><kbd>↑</kbd> изменить своё<span class="dot"></span><kbd>**жирный**</kbd><kbd>||спойлер||</kbd></span></div>
     </section>
 
-    <section class="pane glass demo" aria-label="Демка">
-      <header class="ph">
-        <span class="live js-dlive" hidden><i></i>Live</span>
-        <span class="pt js-dtitle">Демка</span>
-        <span class="pmeta js-dmeta">никто не показывает экран</span>
-        <span class="dtag js-dtag" hidden>{{I:pencil}}можно рисовать</span>
+    <section class="pane glass stage js-stage" aria-label="Звонок">
+      <header class="sth">
+        <span class="st-live" aria-hidden="true"><i></i></span>
+        <span class="st-who js-stwho"></span>
+        <span class="st-meta js-vmeta">—</span>
+        <span class="st-sp"></span>
+        <span class="st-q js-stq" role="img" aria-label="Качество связи"><i></i><i></i><i></i><i></i></span>
+        <span class="st-t js-up">00:00</span>
+        <button class="sbtn js-stadd" type="button" title="Добавить друзей в звонок" aria-label="Добавить друзей в звонок">{{I:user-round-plus}}</button>
+        <button class="sbtn js-stfull" type="button" title="Только звонок — чат спрятать" aria-label="Развернуть звонок" aria-pressed="false">{{I:expand}}</button>
+        <button class="sbtn js-vmin" type="button" title="Свернуть в мини-окно" aria-label="Свернуть звонок">{{I:minimize-2}}</button>
       </header>
-      <div class="screen js-screen" data-tool="none">
-        <video class="dvid js-dvid" autoplay playsinline muted hidden></video>
-        <div class="dempty js-dempty">
-          <div class="dmd-in">
-            <div class="dmd-mon" aria-hidden="true"><i></i><b></b></div>
-            <span class="dmd-h js-deh">Экран никто не показывает</span>
-            <small class="js-des">Запусти демку — друзья в голосе увидят твой экран и смогут рисовать поверх.</small>
-            <div class="btnrow"><button class="cbtn js-dstart" data-win="share">{{I:monitor-up}}Показать экран</button><button class="gbtn js-dcam">{{I:video}}Вебка</button></div>
-            <span class="dmd-k">Ctrl+Shift+S</span>
+      <div class="stb js-stb">
+        <div class="screen js-screen" data-tool="none" hidden>
+          <video class="dvid js-dvid" autoplay playsinline muted></video>
+          <div class="scap"><span class="live js-dlive"><i></i>Live</span><span class="js-dmeta"></span><span class="dtag js-dtag" hidden>{{I:pencil}}можно рисовать</span><span class="dsw js-dsw"></span><button class="sq js-dq" type="button" title="Качество показа — поменять на лету" hidden>{{I:gauge}}<span></span></button></div>
+          <canvas class="ink js-ink"></canvas>
+          <div class="pins js-pins"></div>
+          <div class="tools js-tools" role="toolbar" aria-label="Указка и карандаш" hidden>
+            <button class="tl" data-tool="ptr" aria-pressed="false" title="Указать: клик по экрану">{{I:mouse-pointer-2}}</button>
+            <button class="tl" data-tool="pen" aria-pressed="false" title="Рисовать">{{I:pencil}}</button>
+            <button class="tl js-pencolor" title="Цвет пера" aria-label="Цвет пера"><span class="sw"></span></button>
+            <button class="tl js-erase" title="Стереть своё">{{I:eraser}}</button>
+            <button class="tl js-dfull" title="На весь экран">{{I:maximize-2}}</button>
           </div>
+          <div class="thint js-thint" hidden>клик — метка, её видят все</div>
         </div>
-        <div class="cams js-cams"></div>
-        <canvas class="ink js-ink"></canvas>
-        <div class="pins js-pins"></div>
-        <div class="floaters js-floaters"></div>
-        <div class="tools js-tools" role="toolbar" aria-label="Указка и карандаш" hidden>
-          <button class="tl" data-tool="ptr" aria-pressed="false" title="Указать: клик по экрану">{{I:mouse-pointer-2}}</button>
-          <button class="tl" data-tool="pen" aria-pressed="false" title="Рисовать">{{I:pencil}}</button>
-          <button class="tl js-pencolor" title="Цвет пера" aria-label="Цвет пера"><span class="sw"></span></button>
-          <button class="tl js-erase" title="Стереть своё">{{I:eraser}}</button>
-          <button class="tl js-dfull" title="На весь экран">{{I:maximize-2}}</button>
-        </div>
-        <div class="thint js-thint" hidden>клик — метка, её видят все</div>
+        <div class="vt js-vt" role="list" aria-label="Участники звонка"></div>
+        <div class="floaters js-floaters" aria-hidden="true"></div>
       </div>
-      <footer class="pf">
+      <footer class="stf">
         <span class="watch js-watch">{{I:eye}}<span class="wav js-wav"></span><span class="js-wtx">—</span></span>
+        <div class="ctrl" role="toolbar" aria-label="Управление звонком">
+          <button class="cb ico js-mic" aria-pressed="true" title="Микрофон · Ctrl+M" aria-label="Микрофон">{{I:mic}}</button>
+          <button class="cb ico js-deaf" aria-pressed="true" title="Звук · Ctrl+D" aria-label="Звук">{{I:headphones}}</button>
+          <button class="cb ico js-cam" aria-pressed="false" title="Вебка — видят все в голосе" aria-label="Вебка">{{I:video}}</button>
+          <button class="cb ico js-share" title="Показать экран · Ctrl+Shift+S" aria-label="Показать экран">{{I:monitor-up}}</button>
+          <button class="cb ico js-clip" title="Клип: последние 30 секунд · F8" aria-label="Сохранить клип">{{I:clapperboard}}</button>
+          <button class="cb ico js-btns" title="Кнопки и звуки · F1–F7" aria-label="Кнопки и звуки">{{I:zap}}</button>
+          <button class="cb ico leave js-leave" title="Выйти из голоса · чат останется" aria-label="Выйти из голоса">{{I:phone-off}}</button>
+        </div>
         <span class="rbar js-rbar"></span>
       </footer>
-    </section>
-
-    <section class="pane glass voice" aria-label="Голос">
-      <header class="ph"><span class="pt">Голос</span><span class="pmeta js-vmeta">—</span></header>
-      <div class="vt js-vt"></div>
       <div class="vpop glass js-vpop" hidden>
         <div class="vpin">
         <div class="vph"><b>Кнопки</b><small>видят все в голосе</small></div>
@@ -161,6 +159,7 @@
           <button class="key" data-k="F1" data-act="roll"><kbd>F1</kbd><span>Перекличка</span></button>
           <button class="key" data-k="F2" data-act="call"><kbd>F2</kbd><span>Общий сбор</span></button>
           <button class="key" data-k="F3" data-act="brb"><kbd>F3</kbd><span>Перерыв</span></button>
+          <button class="key" data-k="F7" data-act="vote"><kbd>F7</kbd><span>Голосование</span></button>
         </div>
         <div class="vph"><b>Фразы</b><small>скажет голос у каждого</small></div>
         <div class="keys">
@@ -171,14 +170,6 @@
         <div class="vph"><b>Саундборд</b><small>слышат все в голосе</small></div>
         <div class="sbgrid sbmini js-vsb"></div>
         </div>
-      </div>
-      <div class="ctrl">
-        <button class="cb ico js-mic" aria-pressed="true" title="Микрофон · Ctrl+M" aria-label="Микрофон">{{I:mic}}</button>
-        <button class="cb ico js-deaf" aria-pressed="true" title="Звук · Ctrl+D" aria-label="Звук">{{I:headphones}}</button>
-        <button class="cb ico js-cam" aria-pressed="false" title="Вебка — видят все в голосе" aria-label="Вебка">{{I:video}}</button>
-        <button class="cb js-share" title="Показать экран друзьям в голосе · Ctrl+Shift+S">{{I:monitor-up}}<span>Экран</span></button>
-        <button class="cb js-btns" title="Кнопки и звуки · F1–F6">{{I:zap}}Кнопки</button>
-        <button class="cb leave js-leave" title="Выйти из голоса · чат останется">{{I:log-out}}<span>Выйти</span></button>
       </div>
     </section>
   </main>
@@ -193,7 +184,7 @@
     <span class="live"><i></i>Live</span><b class="js-mch">—</b><span class="mi-t js-up">00:00</span>
     <button class="mib js-mexp" type="button" title="Развернуть" aria-label="Развернуть звонок">{{I:maximize-2}}</button>
   </div>
-  <button class="mi-scr js-mscr" type="button" aria-label="Развернуть звонок"><span class="mi-code js-micode"></span><span class="mi-who"><span class="mi-dot js-mwho">голос</span></span></button>
+  <button class="mi-scr js-mscr" type="button" aria-label="Развернуть звонок"><span class="mi-code js-micode"></span><span class="mi-who js-mwho"><span class="mi-dot ok"></span>голос</span></button>
   <div class="mi-f">
     <span class="mi-av js-mav"></span><span class="mi-sp"></span>
     <button class="mib js-mmic" type="button" title="Микрофон · Ctrl+M"></button>
@@ -249,6 +240,7 @@
           <div class="row"><div class="lab"><b>Наушники / колонки</b></div><span class="selw"><select class="inp js-dev" data-pref="outId" data-kind="audiooutput" aria-label="Вывод звука"></select></span></div>
           <div class="row"><div class="lab"><b>Громкость мика</b><small>больше 100% — усиление, может хрипеть</small></div><div class="rgw"><input type="range" class="rg" min="0" max="200" step="5" data-pref="micVol" aria-label="Громкость мика"><span class="rgv">100%</span></div></div>
           <div class="row"><div class="lab"><b>Громкость звука</b></div><div class="rgw"><input type="range" class="rg" min="0" max="100" data-pref="outVol" aria-label="Громкость звука"><span class="rgv">100%</span></div></div>
+          <div class="row"><div class="lab"><b>Беречь уши</b><small>если у друга резко бахнет (крик, взрыв, свист мика) — его на пару секунд приглушит</small></div><input class="tg" type="checkbox" data-pref="earGuard" aria-label="Беречь уши"></div>
           <h3>Чувствительность мика</h3>
           <div class="sens js-mtest">
             <div class="row"><div class="lab"><b>Определять автоматически</b><small>Hunty сам подстроит порог под шум вокруг</small></div><input class="tg js-gauto" type="checkbox" aria-label="Определять чувствительность автоматически"></div>
@@ -299,6 +291,9 @@
           <div class="row"><div class="lab"><b>Рисовать на моей демке</b><small>указка и карандаш</small></div><span class="selw"><select class="inp" data-pref="shareDraw" aria-label="Кто рисует"><option value="all">все в звонке</option><option value="none">никто</option></select></span></div>
           <div class="row"><div class="lab"><b>Метки исчезают через</b></div><div class="seg" data-pref="pinTtl"><button data-v="5">5 сек</button><button data-v="10">10 сек</button><button data-v="0">Никогда</button></div></div>
           <div class="row"><div class="lab"><b>Режим</b><small>что предлагать в окне выбора</small></div><div class="seg" data-pref="shareHint"><button data-v="detail">Чёткость текста</button><button data-v="motion">Плавность</button></div></div>
+          <h3>Клипы</h3>
+          <div class="row"><div class="lab"><b>Писать последние секунды звонка</b><small>хранится только в памяти, пока не нажмёшь «клип» · <span class="js-clipk">F8</span></small></div><input class="tg" type="checkbox" data-pref="clips" aria-label="Клипы"></div>
+          <div class="row"><div class="lab"><b>Длина клипа</b><small>с демкой — видео, без неё — только звук</small></div><div class="seg" data-pref="clipSec"><button data-v="15">15 сек</button><button data-v="30">30 сек</button><button data-v="60">60 сек</button></div></div>
         </div>
         <div class="spage" data-page="look">
           <h3>Шрифт</h3>
@@ -311,6 +306,7 @@
             <button type="button" role="radio" data-f="system"><b class="ff-system">Аа</b><span>Как в Windows</span></button>
           </div>
           <div class="row"><div class="lab"><b>Размер текста в чате</b></div><div class="rgw"><input type="range" class="rg" min="13" max="19" step="1" data-pref="msgSize" data-unit=" px" aria-label="Размер текста в чате"><span class="rgv">15 px</span></div></div>
+          <div class="row"><div class="lab"><b>Эффекты сообщений</b><small>конфетти, бум, деньги, тряска · правый клик по «Отправить»</small></div><input class="tg" type="checkbox" data-pref="fxMsg" aria-label="Эффекты сообщений"></div>
           <h3>Обои <small class="dim">лежат под стеклом и красиво размываются</small></h3>
           <div class="walls js-walls" role="radiogroup" aria-label="Обои"></div>
           <div class="row js-wallrow"><div class="lab"><b>Размытие</b></div><div class="rgw"><input type="range" class="rg" min="0" max="60" data-pref="wallBlur" data-unit=" px" aria-label="Размытие обоев"><span class="rgv">24 px</span></div></div>
@@ -335,6 +331,8 @@
           <div class="row"><div class="lab"><b>Называть отправителя голосом</b><small>синтезатор речи Windows</small></div><input class="tg" type="checkbox" data-pref="say" aria-label="Голос"></div>
           <div class="row"><div class="lab"><b>Голос</b></div><span class="selw"><select class="inp js-voices" data-pref="voiceName" aria-label="Голос уведомлений"></select></span></div>
           <div class="row"><div class="lab"><b>Громкость уведомлений</b></div><div class="rgw"><input type="range" class="rg" min="0" max="100" data-pref="notifVol" aria-label="Громкость уведомлений"><span class="rgv">70%</span></div></div>
+          <div class="sec">Какие звуки играть</div>
+          <div class="sfxl js-sfxcats"></div>
           <div class="row"><div class="lab"><b>Не беспокоить</b><small>то же, что статус внизу слева · звонки всё равно слышно</small></div><div class="seg js-dnd"><button data-v="0">Выкл</button><button data-v="60">1 час</button><button data-v="480">8 часов</button><button data-v="-1">Пока не выключу</button></div></div>
           <div class="row"><div class="lab"><b>«Отошёл» сам</b><small>без мыши и клавы столько времени — друзья видят жёлтую луну</small></div><div class="seg" data-pref="awayAfter"><button data-v="5">5 мин</button><button data-v="10">10 мин</button><button data-v="30">30 мин</button><button data-v="0">Никогда</button></div></div>
           <div class="row"><div class="lab"><b>Только упоминания</b><small>в группах</small></div><input class="tg" type="checkbox" data-pref="mentionsOnly" aria-label="Только упоминания"></div>
@@ -343,12 +341,9 @@
         </div>
         <div class="spage" data-page="keys">
           <div class="row"><div class="lab"><b>Работают в играх</b><small class="js-gksub">рация и мик ловятся, даже когда Hunty свёрнут · клавиши у игры не отбираются</small></div><input class="tg js-gkeys" type="checkbox" data-pref="pttGlobal" aria-label="Хоткеи в играх"></div>
-          <div class="sec">Голос</div>
-          <div class="krow"><span>Рация (держать)</span><span class="kbds"><kbd class="k js-pttk">V</kbd></span></div>
-          <div class="krow"><span>Мик вкл/выкл</span><span class="kbds"><kbd class="k">Ctrl</kbd>+<kbd class="k">M</kbd><i class="kg">в играх <kbd class="k">Ctrl</kbd>+<kbd class="k">Shift</kbd>+<kbd class="k">M</kbd></i></span></div>
-          <div class="krow"><span>Звук вкл/выкл</span><span class="kbds"><kbd class="k">Ctrl</kbd>+<kbd class="k">D</kbd><i class="kg">в играх <kbd class="k">Ctrl</kbd>+<kbd class="k">Shift</kbd>+<kbd class="k">D</kbd></i></span></div>
-          <div class="krow"><span>Показать экран</span><span class="kbds"><kbd class="k">Ctrl</kbd>+<kbd class="k">Shift</kbd>+<kbd class="k">S</kbd></span></div>
-          <div class="krow"><span>Кнопки в звонке</span><span class="kbds"><kbd class="k">F1</kbd>…<kbd class="k">F6</kbd></span></div>
+          <div class="sec ksec">Звонок<span class="ksp"></span><button class="lnk js-kreset" type="button">Сбросить всё</button></div>
+          <div class="klist js-klist"></div>
+          <div class="khint">клик по клавише — назначить новую · можно сочетание (Ctrl, Alt, Shift) или боковую кнопку мыши · <kbd class="k">Esc</kbd> — отмена · <kbd class="k">Backspace</kbd> — убрать</div>
           <div class="krow"><span>Указать на демке</span><span class="kbds"><kbd class="k">Alt</kbd>+клик</span></div>
           <div class="sec">Чаты</div>
           <div class="krow"><span>Вкладка 1…9</span><span class="kbds"><kbd class="k">Alt</kbd>+<kbd class="k">1</kbd>…<kbd class="k">9</kbd></span></div>
@@ -395,7 +390,7 @@
         <div class="spage" data-page="about">
           <div class="about">
             <span class="big">{{LOGO}}Hunty</span>
-            <span class="js-ver">v0.3.0 · бесплатно навсегда</span>
+            <span class="js-ver">v0.4.0 · бесплатно навсегда</span>
             <span class="dim">P2P: libp2p (QUIC/TCP, Noise, DHT, relay, hole punching) · голос и демка — WebRTC</span>
             <button class="gbtn sm js-upd">Проверить обновления</button>
             <span class="dim js-updst"></span>
@@ -445,16 +440,6 @@
     <footer class="wf"><button class="gbtn sm js-gtojoin" data-win="join">{{I:link}}У меня инвайт</button><span class="note2">ты будешь админом</span><button class="gbtn js-close">Отмена</button><button class="cbtn js-gcreate">Создать</button></footer>
     <input type="file" class="js-gpicf" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
   </section>
-
-  <!-- ============ избранное ============ -->
-  <section class="win glass favs" data-win="favs" role="dialog" aria-modal="true" aria-label="Избранное">
-    <header class="wh">{{WI:bookmark}}<span class="wt">Избранное</span><span class="wsub js-favsub">сохранённые сообщения · лежат только у тебя</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
-    <div class="wb">
-      <label class="search favq">{{I:search}}<input class="js-favq" placeholder="Найти в избранном" autocomplete="off" spellcheck="false" aria-label="Найти в избранном" data-autofocus="1"></label>
-      <div class="favl js-favl"></div>
-    </div>
-  </section>
-
   <!-- ============ мастер «меня плохо слышат» ============ -->
   <section class="win glass micfix" data-win="micfix" role="dialog" aria-modal="true" aria-label="Меня плохо слышат">
     <header class="wh">{{WI:wand-sparkles}}<span class="wt">Меня плохо слышат</span><span class="wsub">проверим и починим за минуту</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
@@ -487,6 +472,61 @@
       <p class="lead shint">{{I:info}}<span>После «Показать» Windows откроет своё окно выбора экрана. Не видно — оно спряталось за Hunty: нажми <kbd>Alt+Tab</kbd>. Пока идёт показ, сверху горит красная плашка с кнопкой «Остановить».</span></p>
     </div>
     <footer class="wf"><span class="note2 js-sinfo">напрямую P2P</span><button class="gbtn js-close">Отмена</button><button class="cbtn js-sstart">{{I:monitor-up}}Показать</button></footer>
+  </section>
+
+  <!-- ============ свой стикер ============ -->
+  <section class="win glass skm" data-win="stkmake" role="dialog" aria-modal="true" aria-label="Новый стикер">
+    <header class="wh">{{WI:scissors}}<span class="wt">Новый стикер</span><span class="wsub">вырежи что угодно из фотки</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
+    <div class="wb skm-b">
+      <div class="skm-l">
+        <div class="skm-stage js-skstage">
+          <canvas class="js-skcv" aria-label="Фото: обведи или сотри лишнее"></canvas>
+          <div class="skm-drop js-skdrop">{{I:image-plus}}<b>Выбери фотку</b><span>или перетащи сюда · Ctrl+V</span><button type="button" class="cbtn sm js-skpick">{{I:image}}Выбрать фото</button></div>
+          <div class="skm-busy js-skbusy" hidden><i></i><span>вырезаю…</span></div>
+        </div>
+        <div class="seg wide skm-tools js-sktool" role="group" aria-label="Инструмент">
+          <button type="button" data-t="auto" title="Вырезать само">{{I:wand-sparkles}}Авто</button>
+          <button type="button" data-t="lasso" title="Обвести пальцем или мышкой">{{I:scissors}}Обвести</button>
+          <button type="button" data-t="erase" title="Стереть лишнее">{{I:eraser}}Стереть</button>
+          <button type="button" data-t="restore" title="Вернуть срезанное">{{I:brush}}Вернуть</button>
+          <button type="button" data-t="full" title="Вся картинка, без выреза">{{I:square}}Целиком</button>
+        </div>
+        <div class="skm-sub"><label class="skm-size js-sksize"><span>кисть</span><input type="range" class="js-skbr" min="6" max="70" value="24" aria-label="Размер кисти"></label><button type="button" class="gbtn sm js-skundo" title="Ctrl+Z">{{I:rotate-ccw}}Отменить</button><button type="button" class="gbtn sm js-skpick">{{I:image}}Другое фото</button></div>
+        <p class="skm-hint js-skhint"></p>
+      </div>
+      <div class="skm-r">
+        <div class="skm-pv"><span class="stkfx js-skfx"><img class="js-skimg" alt="Превью стикера" hidden></span><span class="skm-pv0 js-skpv0">тут будет стикер</span></div>
+        <div class="row"><div class="lab"><b>Обводка</b></div><div class="seg js-skstroke"><button type="button" data-v="0">Нет</button><button type="button" data-v="1">Тонкая</button><button type="button" data-v="2">Жирная</button></div></div>
+        <div class="row col"><div class="lab"><b>Покрытие</b><small>блик бежит прямо по стикеру — у друзей тоже</small></div><div class="seg wide js-skfin"><button type="button" data-v="">Обычное</button><button type="button" data-v="gloss">Глянец</button><button type="button" data-v="holo">Голограмма</button></div></div>
+        <input class="inp js-skname" maxlength="40" placeholder="Подпись — чтобы найти поиском" aria-label="Подпись" autocomplete="off">
+      </div>
+    </div>
+    <footer class="wf"><span class="note2">уйдёт картинкой — друзьям ничего ставить не надо</span><button type="button" class="gbtn js-close">Отмена</button><button type="button" class="gbtn js-sksave">{{I:star}}Себе</button><button type="button" class="cbtn js-sksend">{{I:send}}Отправить</button></footer>
+  </section>
+
+  <!-- ============ зал славы ============ -->
+  <section class="win glass hall" data-win="hall" role="dialog" aria-modal="true" aria-label="Зал славы">
+    <header class="wh">{{WI:trophy}}<span class="wt">Зал славы</span><span class="wsub">лучшие моменты ваших чатов</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
+    <div class="wb">
+      <div class="hl-sec"><b>Награды недели</b><small class="js-hlweek"></small></div>
+      <div class="hlaw js-hlaw"></div>
+      <div class="hl-sec"><b>Моменты</b><small class="js-hlcount"></small><span class="selw"><select class="inp js-hlroom" aria-label="Чат"></select></span></div>
+      <div class="hlist js-hlist"></div>
+    </div>
+  </section>
+
+  <!-- ============ клипы и скрины ============ -->
+  <section class="win glass media" data-win="media" role="dialog" aria-modal="true" aria-label="Клипы и скрины">
+    <header class="wh">{{WI:film}}<span class="wt">Клипы и скрины</span><span class="wsub js-mdroom"></span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc">{{I:x}}</button></header>
+    <div class="wb">
+      <div class="mdbar"><div class="seg js-mdf" role="group" aria-label="Что показать"><button type="button" data-v="all" aria-pressed="true">Всё</button><button type="button" data-v="clip" aria-pressed="false">{{I:film}}Клипы</button><button type="button" data-v="pic" aria-pressed="false">{{I:image}}Картинки</button></div><span class="mdn js-mdn"></span></div>
+      <div class="mdgrid js-mdgrid"></div>
+      <div class="mdempty js-mdempty" hidden></div>
+      <div class="mdplay js-mdplay" hidden>
+        <video controls playsinline preload="metadata"></video>
+        <div class="mdpbar"><button type="button" class="gbtn sm js-mdback">{{I:arrow-left}}Назад</button><span class="mdpinfo js-mdpinfo"></span><button type="button" class="gbtn sm js-mdjump">{{I:message-circle}}К сообщению</button><button type="button" class="cbtn sm js-mdsave">{{I:download}}Сохранить</button></div>
+      </div>
+    </div>
   </section>
 
   <!-- ============ профиль ============ -->

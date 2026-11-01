@@ -6,7 +6,7 @@ import { S, myId, myNick, roomName, avaOf, autoColor } from './state.js';
 import { avaURL, mobName, randomMob, MOBKEYS, MOBS, mobURL } from './mobs.js';
 import { cardHTML, BANNERS, bannerBg, isImg, isColor, shrinkImage } from './card.js';
 import { openMenu } from './menu.js';
-import { app, tmsg, tone, TONES, toast, closeToast, fail, openW, closeW, OPEN, CLOSE, segSet, rgv, actx, ttsVoices, speak, fit, winOpen, JOURNAL, copyText } from './ui.js';
+import { app, tmsg, tone, TONES, toast, closeToast, fail, openW, closeW, OPEN, CLOSE, segSet, rgv, actx, ttsVoices, speak, fit, winOpen, JOURNAL, copyText, sfx, SFX_CATS } from './ui.js';
 import { V, camStart, camStop } from './voice.js';
 import { refreshCode, unblock } from './friends.js';
 import { clearRoom } from './chat.js';
@@ -14,7 +14,8 @@ import { eggsText } from './eggs.js';
 import { getMic, micChain, levelDb, FX, fxName, dnLoad } from './audio.js';
 import { renderBoard, wireBoard } from './board.js';
 import { WALLS, setWallImage, wallImage } from './look.js';
-import { keyName, gkeysOk } from './system.js';
+import { keyLabel, keyOf } from './keyname.js';
+import { gkeysOk, bindKey } from './keys.js';
 import { bump } from './motion.js';
 
 /** репозиторий для проверки обновлений (GitHub Releases) */
@@ -35,6 +36,7 @@ function setTab(t) {
   if (t === 'audio') { sensSync(); nsSub(); pttSync(); renderFx(); renderBoard(sbSet, { add: true, del: true }); micTest(); }
   if (t === 'look') { fontSync(); renderWalls(); }
   if (t === 'keys') keysSync();
+  if (t === 'share') $('.js-clipk', sw).textContent = keyLabel(keyOf('clip')) || 'F8';
   if (t === 'net') { renderNet(); netPoll(); renderJournal(); }
   if (t === 'storage') renderStorage();
   if (t === 'priv') renderBlocked();
@@ -52,7 +54,7 @@ OPEN.settings = (_, o) => { syncPrefs(); syncCfg(); setTab(o.tab || tab); eggsTe
 CLOSE.settings = () => { stopMicTest(); stopCam(); clearInterval(netIv); };
 
 /* ---------- контролы ↔ prefs ---------- */
-const NUM = new Set(['micVol', 'outVol', 'ptt', 'bitrate', 'camRes', 'shareRes', 'shareFps', 'pinTtl', 'glassA', 'scale', 'notifVol', 'gateDb', 'msgSize', 'wallBlur', 'wallDim', 'sbVol', 'awayAfter']);
+const NUM = new Set(['micVol', 'outVol', 'ptt', 'bitrate', 'camRes', 'shareRes', 'shareFps', 'pinTtl', 'glassA', 'scale', 'notifVol', 'gateDb', 'msgSize', 'wallBlur', 'wallDim', 'sbVol', 'awayAfter', 'clipSec']);
 const val = (k, v) => NUM.has(k) ? +v : v;
 export function syncPrefs() {
   $$('[data-pref]', sw).forEach(el => {
@@ -62,7 +64,7 @@ export function syncPrefs() {
     else if (el.type === 'range') { el.value = v; rgv(el); }
     else if (el.tagName === 'SELECT') { el.value = v ?? ''; if (el.value !== String(v ?? '')) el.value = ''; }
   });
-  dndSync(); sensSync(); pttSync(); wallRows();
+  dndSync(); sensSync(); pttSync(); wallRows(); sfxRows();
   $('.js-camv').classList.toggle('mir', prefs.camMirror !== false);
 }
 sw.addEventListener('click', e => {
@@ -75,6 +77,18 @@ sw.addEventListener('change', e => {
   else setPref(k, val(k, el.value));
 });
 sw.addEventListener('input', e => { const el = e.target; if (el.type === 'range' && el.dataset.pref) setPref(el.dataset.pref, +el.value); });
+/* ---------- какие звуки играть: по категориям, у каждой — «послушать» ---------- */
+const sfxCats = $('.js-sfxcats', sw);
+const SFX_TRY = { calls: 'ring', voice: 'join', mic: 'mute', stream: 'streamon', msg: 'mention', fun: 'hall' };
+function sfxRows() {
+  const off = prefs.sfxOff || {};
+  sfxCats.classList.toggle('off', !prefs.sound);
+  sfxCats.innerHTML = SFX_CATS.map(([k, n, d]) => `<div class="row"><div class="lab"><b>${esc(n)}</b><small>${esc(d)}</small></div><button class="ib sm js-sfxtry" type="button" data-c="${k}" title="Послушать" aria-label="Послушать: ${esc(n)}">${ic('volume-2')}</button><input class="tg" type="checkbox" data-sfxcat="${k}" aria-label="${esc(n)}"${off[k] ? '' : ' checked'}></div>`).join('');
+}
+function sfxTry(k) { const n = sfx(SFX_TRY[k], 1, true); if (n && k === 'calls') setTimeout(() => { try { n.stop(); } catch (_) {} }, 1300); }
+sfxCats.addEventListener('change', e => { const k = e.target.dataset && e.target.dataset.sfxcat; if (!k) return; setPref('sfxOff', { ...(prefs.sfxOff || {}), [k]: !e.target.checked }); if (e.target.checked) sfxTry(k); });
+sfxCats.addEventListener('click', e => { const b = e.target.closest('.js-sfxtry'); if (b) sfxTry(b.dataset.c); });
+bus.on('pref', k => { if (k === 'sound') sfxCats.classList.toggle('off', !prefs.sound); });
 bus.on('pref', (k, v) => {
   if (k === 'scale') fit();
   if (k === 'camMirror') $('.js-camv').classList.toggle('mir', v !== false);
@@ -83,7 +97,7 @@ bus.on('pref', (k, v) => {
   if (['micId', 'nsMode', 'ec', 'agc'].includes(k) && mt) { stopMicTest(); micTest(); }
   if (k === 'gate' || k === 'gateDb') sensSync();
   if (k === 'nsMode') nsSub();
-  if (k === 'ptt' || k === 'pttKey') pttSync();
+  if (k === 'ptt' || k === 'pttKey' || k === 'keys') pttSync();
   if (k === 'fx') renderFx();
   if (k === 'wall') { renderWalls(); wallRows(); }
   if (k === 'voiceName' || k === 'say') { if (prefs.say) speak('Привет, это голос уведомлений', true); }
@@ -238,28 +252,13 @@ function nsSub() {
   if (m === 'rnnoise') dnLoad().then(ok => { if (!ok && (prefs.nsMode || 'rnnoise') === 'rnnoise') el.textContent = 'умный шумодав тут не запустился — пока работает обычный'; });
 }
 
-/* рация: своя клавиша (или кнопка мыши) */
+/* рация: своя клавиша (или кнопка мыши) — назначается там же, где все хоткеи */
 const pttBtn = $('.js-pttkey', sw);
 function pttSync() {
-  pttBtn.textContent = keyName(prefs.pttKey);
+  pttBtn.textContent = keyLabel(keyOf('ptt'));
   $$('.js-pttrow', sw).forEach(r => { r.hidden = !+prefs.ptt; });
-  const k = $('.js-pttk', sw); if (k) k.textContent = keyName(prefs.pttKey);
 }
-let capT = 0;
-pttBtn.addEventListener('click', () => {
-  if (capT) return;
-  pttBtn.classList.add('wait'); pttBtn.textContent = 'нажми клавишу…';
-  const end = code => {
-    removeEventListener('keydown', kd, true); removeEventListener('mousedown', md, true); clearTimeout(capT); capT = 0;
-    pttBtn.classList.remove('wait');
-    if (code) { setPref('pttKey', code === 'KeyV' ? '' : code); tmsg('ok', 'рация: ' + keyName(code)); bump(pttBtn, 1.08); }
-    pttSync();
-  };
-  const kd = e => { e.preventDefault(); e.stopPropagation(); if (e.code) end(e.code === 'Escape' ? '' : e.code); };
-  const md = e => { if (e.button === 0 || e.button === 2) { if (!e.target.closest('.js-pttkey')) end(''); return; } e.preventDefault(); end('Mouse' + (e.button + 1)); };
-  addEventListener('keydown', kd, true); addEventListener('mousedown', md, true);
-  capT = setTimeout(() => end(''), 8000);
-});
+pttBtn.addEventListener('click', () => bindKey('ptt', pttBtn));
 
 /* эффекты голоса */
 const fxGrid = $('.js-fxgrid', sw);
@@ -395,7 +394,7 @@ export function spin(imgs, final, n = 10) {
     let i = 0; imgs.forEach(im => im.classList.add('spin'));
     const iv = setInterval(() => {
       const k = i < n ? randomMob() : final; imgs.forEach(im => { im.src = avaURL(k); });
-      if (i % 2 === 0) tone([[300 + i * 40, .02]], .25);
+      if (i % 2 === 0) sfx('tick', .35);
       if (++i > n) { clearInterval(iv); imgs.forEach(im => { im.classList.remove('spin'); im.classList.remove('landed'); void im.offsetWidth; im.classList.add('landed'); }); res(); }
     }, 60 + i * 4);
   });
@@ -432,7 +431,7 @@ $('.js-accava').addEventListener('click', e => {
 $('.js-mobgrid').addEventListener('click', e => {
   if (e.target.closest('.js-mobrnd')) { rollMob(); return; }
   const b = e.target.closest('[data-mob]'); if (!b) return;
-  saveProf({ ava: 'mob:' + b.dataset.mob }, `теперь ты — ${MOBS[b.dataset.mob].n}`); tone([[660, .04], [880, .06]], .5);
+  saveProf({ ava: 'mob:' + b.dataset.mob }, `теперь ты — ${MOBS[b.dataset.mob].n}`); sfx('ok', .7);
 });
 $('.js-bans').addEventListener('click', e => {
   if (e.target.closest('.js-banup')) { pickImg('.js-banfile', { w: 600, h: 212, max: 190 * 1024 }, u => ({ banner: u }), 'шапка профиля обновлена'); return; }
@@ -548,7 +547,7 @@ $('.js-netbtn').addEventListener('click', async () => {
 });
 
 /* ---------- о программе и обновления ---------- */
-function about() { $('.js-ver').textContent = `v${S.version || '0.3.0'} · бесплатно навсегда`; }
+function about() { $('.js-ver').textContent = `v${S.version || '0.4.0'} · бесплатно навсегда`; }
 const cmpV = (a, b) => { const p = s => String(s).replace(/^v/, '').split(/[.-]/).map(x => +x || 0); const x = p(a), y = p(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
 export async function checkUpdate(silent) {
   const st = $('.js-updst');

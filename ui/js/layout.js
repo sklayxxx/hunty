@@ -2,84 +2,92 @@
 import { $, $$, R, clamp, mobile, reduce, prefs, setPref, bus } from './core.js';
 import { app, tmsg } from './ui.js';
 
-const tilesEl = $('.tiles'), listP = $('.pane.list'), chatP = $('.pane.chat'), demoP = $('.pane.demo'), voiceP = $('.pane.voice');
+const tilesEl = $('.tiles'), listP = $('.pane.list'), chatP = $('.pane.chat'), stageP = $('.js-stage'), stb = $('.js-stb');
 const mini = $('.js-mini');
 
-/* ---------- ресайз колонок: тянешь щель между панелями ---------- */
-const LAYD = { c1: 272, c3: 0, vh: 0 };
+/* ---------- ресайз: щель между списком и остальным, между сценой звонка и чатом ---------- */
+// sh — высота сцены без видео (только аватарки), shv — когда есть экран или вебки
+const LAYD = { c1: 272, sh: 0, shv: 0 };
 const LAY = Object.assign({}, LAYD);
-try { Object.assign(LAY, JSON.parse(localStorage.getItem('hunty-lay') || '{}')); } catch (_) {}
+try { const o = JSON.parse(localStorage.getItem('hunty-lay') || '{}'); ['c1', 'sh', 'shv'].forEach(k => { if (+o[k] > 0) LAY[k] = +o[k]; }); } catch (_) {}
 const zf = () => parseFloat(app.style.zoom) || 1;
 const gapPx = () => parseFloat(getComputedStyle(tilesEl).columnGap) || 10;
 const saveLay = () => { try { localStorage.setItem('hunty-lay', JSON.stringify(LAY)); } catch (_) {} };
+const vid = () => stb.classList.contains('has-scr') || !!$('.vtile.cam', stb);
+const shKey = () => vid() ? 'shv' : 'sh';
 const G = {};
-[['c1', 'v', 'Ширина списка чатов', 'список'], ['c3', 'v', 'Ширина демки и голоса', 'демка и голос'], ['vh', 'h', 'Высота панели голоса', 'голос']].forEach(([k, d, l, s]) => {
+[['c1', 'v', 'Ширина списка чатов', 'список'], ['sh', 'h', 'Высота звонка', 'звонок']].forEach(([k, d, l, s]) => {
   const g = document.createElement('div'); g.className = 'gut ' + d; g.dataset.k = k; g.dataset.s = s; g.tabIndex = 0;
   g.setAttribute('role', 'separator'); g.setAttribute('aria-orientation', d === 'h' ? 'horizontal' : 'vertical');
   g.setAttribute('aria-label', l); g.title = l + ' · тяни · двойной клик — как было'; g.innerHTML = '<i aria-hidden="true"></i>';
   tilesEl.appendChild(g); G[k] = g;
 });
 const gtip = document.createElement('div'); gtip.className = 'gtip'; gtip.hidden = true; gtip.setAttribute('aria-hidden', 'true'); document.body.appendChild(gtip);
+const inCall = () => !app.classList.contains('calm');
+const focusOn = () => app.classList.contains('stfocus');
 function limits() {
-  const W = tilesEl.clientWidth, H = tilesEl.clientHeight, g = gapPx(), calm = app.classList.contains('calm');
-  return { c1: [216, Math.max(216, Math.min(440, W - (calm ? 380 : 380 + 300 + 2 * g)))], c3: [300, Math.max(300, W - LAY.c1 - 360 - 2 * g)], vh: [150, Math.max(150, H - 200 - g)] };
+  const W = tilesEl.clientWidth, H = tilesEl.clientHeight, g = gapPx();
+  return { c1: [216, Math.max(216, Math.min(440, W - 420 - g))], sh: [180, Math.max(180, H - 230 - g)] };
 }
+/** высота сцены по умолчанию: без видео — поменьше (аватарки), с видео — побольше */
+const shDef = k => { const H = tilesEl.clientHeight || 700; return Math.round(k === 'shv' ? clamp(H * .6, 300, 640) : clamp(H * .36, 236, 350)); };
+const shNow = () => { const k = shKey(); return LAY[k] || shDef(k); };
 export function applyLay() {
   const L = limits(); const c1 = clamp(LAY.c1, ...L.c1);
   app.style.setProperty('--c1', c1 + 'px');
-  app.style.setProperty('--c3', LAY.c3 ? clamp(LAY.c3, ...L.c3) + 'px' : 'minmax(0,1.12fr)');
-  app.style.setProperty('--vh', LAY.vh ? clamp(LAY.vh, ...L.vh) + 'px' : 'auto');
+  app.style.setProperty('--sh', Math.round(clamp(shNow(), ...L.sh)) + 'px');
   requestAnimationFrame(placeGuts);
 }
 function placeGuts() {
-  const calm = app.classList.contains('calm'), mob = mobile(), g = gapPx();
-  G.c1.hidden = mob; G.c3.hidden = mob || calm; G.vh.hidden = mob || calm; if (mob) return;
+  const mob = mobile(), g = gapPx(), shOn = !mob && inCall() && !focusOn();
+  G.c1.hidden = mob; G.sh.hidden = !shOn; if (mob) return;
   const set = (e, l, t, w, h) => { e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.height = h + 'px'; };
   set(G.c1, listP.offsetLeft + listP.offsetWidth, listP.offsetTop, g, listP.offsetHeight);
-  if (!calm) { set(G.c3, chatP.offsetLeft + chatP.offsetWidth, chatP.offsetTop, g, chatP.offsetHeight); set(G.vh, demoP.offsetLeft, demoP.offsetTop + demoP.offsetHeight, demoP.offsetWidth, g); }
+  if (shOn) set(G.sh, stageP.offsetLeft, stageP.offsetTop + stageP.offsetHeight, stageP.offsetWidth, g);
   const L = limits();
-  [['c1', listP.offsetWidth], ['c3', demoP.offsetWidth], ['vh', voiceP.offsetHeight]].forEach(([k, v]) => { G[k].setAttribute('aria-valuemin', L[k][0]); G[k].setAttribute('aria-valuemax', Math.round(L[k][1])); G[k].setAttribute('aria-valuenow', Math.round(v)); });
+  [['c1', listP.offsetWidth], ['sh', stageP.offsetHeight]].forEach(([k, v]) => { G[k].setAttribute('aria-valuemin', L[k][0]); G[k].setAttribute('aria-valuemax', Math.round(L[k][1])); G[k].setAttribute('aria-valuenow', Math.round(v)); });
 }
-const sizeOf = k => k === 'c1' ? listP.offsetWidth : k === 'c3' ? demoP.offsetWidth : voiceP.offsetHeight;
+const sizeOf = k => k === 'c1' ? listP.offsetWidth : stageP.offsetHeight;
 function tipAt(x, y, k) { gtip.textContent = `${G[k].dataset.s} · ${Math.round(sizeOf(k))}px`; gtip.hidden = false; gtip.style.left = (x + 14) + 'px'; gtip.style.top = (y + 16) + 'px'; }
 let gd = null;
 tilesEl.addEventListener('pointerdown', e => {
   const g = e.target.closest('.gut'); if (!g || e.button !== 0) return; e.preventDefault();
   const k = g.dataset.k;
-  gd = { k, g, id: e.pointerId, x: e.clientX, y: e.clientY, c1: listP.offsetWidth, c3: demoP.offsetWidth, vh: voiceP.offsetHeight, z: zf() };
-  g.setPointerCapture(e.pointerId); g.classList.add('on'); R.classList.add('resizing', k === 'vh' ? 'rs-h' : 'rs-v'); tipAt(e.clientX, e.clientY, k);
+  gd = { k, g, id: e.pointerId, x: e.clientX, y: e.clientY, c1: listP.offsetWidth, sh: stageP.offsetHeight, z: zf() };
+  g.setPointerCapture(e.pointerId); g.classList.add('on'); R.classList.add('resizing', k === 'sh' ? 'rs-h' : 'rs-v'); tipAt(e.clientX, e.clientY, k);
 });
 tilesEl.addEventListener('pointermove', e => {
   if (!gd || e.pointerId !== gd.id) return;
   const dx = (e.clientX - gd.x) / gd.z, dy = (e.clientY - gd.y) / gd.z, L = limits();
   if (gd.k === 'c1') LAY.c1 = Math.round(clamp(gd.c1 + dx, ...L.c1));
-  if (gd.k === 'c3') LAY.c3 = Math.round(clamp(gd.c3 - dx, ...L.c3));
-  if (gd.k === 'vh') LAY.vh = Math.round(clamp(gd.vh - dy, ...L.vh));
+  if (gd.k === 'sh') LAY[shKey()] = Math.round(clamp(gd.sh + dy, ...L.sh));
   applyLay(); tipAt(e.clientX, e.clientY, gd.k);
 });
-function gEnd() { if (!gd) return; gd.g.classList.remove('on'); gd = null; R.classList.remove('resizing', 'rs-h', 'rs-v'); gtip.hidden = true; saveLay(); placeMini(false); }
+function gEnd() { if (!gd) return; gd.g.classList.remove('on'); gd = null; R.classList.remove('resizing', 'rs-h', 'rs-v'); gtip.hidden = true; saveLay(); placeMini(false); bus.emit('panes'); }
 tilesEl.addEventListener('pointerup', gEnd); tilesEl.addEventListener('pointercancel', gEnd);
 function resetLay(k) {
-  const from = sizeOf(k); LAY[k] = LAYD[k]; applyLay(); const to = sizeOf(k); tmsg('ok', 'размер вернул как было');
+  const key = k === 'sh' ? shKey() : k;
+  const from = sizeOf(k); LAY[key] = LAYD[key]; applyLay(); const to = k === 'sh' ? clamp(shNow(), ...limits().sh) : sizeOf(k); tmsg('ok', 'размер вернул как было');
   if (reduce || Math.abs(to - from) < 2) { saveLay(); placeMini(false); return; }
-  const t0 = performance.now(), D = 260; LAY[k] = from; applyLay();
-  let done = false; const fin = () => { if (done) return; done = true; LAY[k] = LAYD[k]; applyLay(); saveLay(); placeMini(false); };
-  const f = () => { if (done) return; const q = Math.min(1, (performance.now() - t0) / D), ee = 1 - Math.pow(1 - q, 3); LAY[k] = Math.round(from + (to - from) * ee); applyLay(); if (q < 1) requestAnimationFrame(f); else fin(); };
+  const t0 = performance.now(), D = 260; LAY[key] = from; applyLay();
+  let done = false; const fin = () => { if (done) return; done = true; LAY[key] = LAYD[key]; applyLay(); saveLay(); placeMini(false); };
+  const f = () => { if (done) return; const q = Math.min(1, (performance.now() - t0) / D), ee = 1 - Math.pow(1 - q, 3); LAY[key] = Math.round(from + (to - from) * ee); applyLay(); if (q < 1) requestAnimationFrame(f); else fin(); };
   requestAnimationFrame(f); setTimeout(fin, D + 120);
 }
 tilesEl.addEventListener('dblclick', e => { const g = e.target.closest('.gut'); if (g) resetLay(g.dataset.k); });
 tilesEl.addEventListener('keydown', e => {
   const g = e.target.closest('.gut'); if (!g) return;
   const k = g.dataset.k, st = e.shiftKey ? 48 : 16, L = limits(), cur0 = sizeOf(k); let v = null;
-  if (k === 'vh') { if (e.key === 'ArrowUp') v = cur0 + st; if (e.key === 'ArrowDown') v = cur0 - st; }
-  else { const s = k === 'c3' ? -1 : 1; if (e.key === 'ArrowRight') v = cur0 + st * s; if (e.key === 'ArrowLeft') v = cur0 - st * s; }
+  if (k === 'sh') { if (e.key === 'ArrowDown') v = cur0 + st; if (e.key === 'ArrowUp') v = cur0 - st; }
+  else { if (e.key === 'ArrowRight') v = cur0 + st; if (e.key === 'ArrowLeft') v = cur0 - st; }
   if (e.key === 'Enter' || e.key === 'Home') { e.preventDefault(); resetLay(k); return; }
-  if (v == null) return; e.preventDefault(); LAY[k] = Math.round(clamp(v, ...L[k])); applyLay(); saveLay();
+  if (v == null) return; e.preventDefault(); LAY[k === 'sh' ? shKey() : k] = Math.round(clamp(v, ...L[k])); applyLay(); saveLay();
 });
 const roLay = new ResizeObserver(() => requestAnimationFrame(() => { placeGuts(); bus.emit('panes'); placeMini(false); }));
-[tilesEl, listP, chatP, demoP, voiceP].forEach(el => roLay.observe(el));
+[tilesEl, listP, chatP, stageP].forEach(el => roLay.observe(el));
 addEventListener('resize', applyLay);
 bus.on('layout', () => { applyLay(); placeMini(false); requestAnimationFrame(() => placeMini(false)); });
+bus.on('stagevid', () => applyLay());
 bus.on('fit', () => requestAnimationFrame(placeGuts));
 
 /* ---------- мини-окно звонка: таскается, липнет к углам чата, тянется за уголок ---------- */

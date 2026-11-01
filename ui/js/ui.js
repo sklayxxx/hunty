@@ -34,7 +34,7 @@ let ac;
 export function actx() {
   try {
     if (!ac && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null;
-    if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' }); sinkCtx(); }
+    if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' }); sinkCtx(); ac.onstatechange = () => bus.emit('actx', ac.state); setTimeout(sfxWarm, 1200); }
     if (ac.state === 'suspended') ac.resume();
     return ac;
   } catch (_) { return null; }
@@ -42,8 +42,57 @@ export function actx() {
 // весь звук приложения (сигналы, громкость >100%, «слышать себя») — в выбранные наушники
 function sinkCtx() { if (ac && ac.setSinkId) { const id = prefs.outId || ''; if ((ac.sinkId || '') !== id) ac.setSinkId(id).catch(() => {}); } }
 bus.on('pref', k => { if (k === 'outId') sinkCtx(); });
-export function tone(seq, vol = 1) {
-  if (!prefs.sound) return;
+export const TONES = {
+  msg: [[880, .05], [1175, .08]], mention: [[988, .06], [1319, .06], [1568, .1]], join: [[523, .06], [784, .1]], leave: [[784, .06], [523, .1]],
+  ring: [[440, .15], [554, .15]], ok: [[659, .05], [988, .09]], err: [[330, .08], [262, .14]], friend: [[523, .06], [659, .06], [784, .1]],
+};
+/* ---------- звуки действий: настоящие файлы (CC0, ui/sfx/*.ogg, громкость выровнена), синтез — только запасной ---------- */
+// cat — галочка в «Уведомления → Звуки»; v — громкость относительно остальных
+export const SFX_CATS = [
+  ['calls', 'Звонки', 'входящий и исходящий звонок, сброс'],
+  ['voice', 'Голос', 'зашёл / вышел ты или друг'],
+  ['mic', 'Мик и звук', 'включил / выключил'],
+  ['stream', 'Демка', 'кто-то начал или закончил показ экрана'],
+  ['msg', 'Сообщения', 'новое сообщение, упоминание, друг в сети'],
+  ['fun', 'Фишки', 'клипы, Зал славы, пинки, перекличка, эффекты'],
+];
+const SFX = {
+  msg: ['msg', .55, TONES.msg], mention: ['msg', .7, TONES.mention], friend: ['msg', .6, TONES.friend], online: ['msg', .45, TONES.join],
+  ring: ['calls', .8, TONES.ring], ringback: ['calls', .55, TONES.ring], hangup: ['calls', .7, TONES.leave],
+  join: ['voice', .7, TONES.join], leave: ['voice', .7, TONES.leave], pjoin: ['voice', .6, [[587, .05], [880, .08]]], pleave: ['voice', .6, [[880, .05], [587, .08]]],
+  mute: ['mic', .55, [[660, .04], [440, .05]]], unmute: ['mic', .55, [[660, .04], [880, .05]]], deaf: ['mic', .55, [[520, .04], [330, .06]]], undeaf: ['mic', .55, [[440, .04], [660, .05]]],
+  streamon: ['stream', .6, [[523, .05], [659, .05], [784, .08]]], streamoff: ['stream', .6, [[784, .05], [523, .08]]],
+  clip: ['fun', .7, [[1320, .03], [990, .05]]], hall: ['fun', .7, [[523, .1], [659, .1], [784, .1], [1047, .25]]], nudge: ['fun', .8, [[260, .05], [200, .06], [520, .05]]],
+  roll: ['fun', .6, TONES.mention], tick: ['fun', .5, [[1320, .03]]], allhere: ['fun', .65, TONES.friend], say: ['fun', .5, [[880, .04], [1320, .05]]], brb: ['fun', .6, [[523, .1], [392, .14]]],
+  pop: ['fun', .45, [[990, .05]]], boom: ['fun', .7, [[120, .2], [80, .3]]], cash: ['fun', .65, [[1568, .05], [2093, .08]]], confetti: ['fun', .6, [[784, .05], [988, .05], [1319, .08]]], shake: ['fun', .6, [[180, .05], [150, .08]]],
+  ok: ['ui', .5, TONES.ok], err: ['ui', .55, TONES.err], egg: ['fun', .6, [[784, .05], [988, .05], [1319, .1]]],
+};
+const sfxBuf = new Map(); // имя → AudioBuffer | Promise
+function sfxLoad(a, name) {
+  if (!sfxBuf.has(name)) sfxBuf.set(name, fetch('sfx/' + name + '.ogg').then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(b => a.decodeAudioData(b)).then(b => (sfxBuf.set(name, b), b)).catch(() => (sfxBuf.set(name, null), null)));
+  return sfxBuf.get(name);
+}
+/** все звуки заранее: первый звонок не должен ждать загрузки */
+export function sfxWarm() { const a = actx(); if (a) Object.keys(SFX).forEach(n => sfxLoad(a, n)); }
+export const sfxOn = cat => !!prefs.sound && !((prefs.sfxOff || {})[cat]);
+/** сыграть звук действия; вернёт узел (можно остановить) или null */
+export function sfx(name, vol = 1, force = false) {
+  const d = SFX[name]; if (!d || (!force && !sfxOn(d[0]))) return null;
+  const a = actx(); if (!a) return null;
+  const b = sfxBuf.get(name);
+  if (!(b instanceof AudioBuffer)) { if (b === undefined) sfxLoad(a, name); if (d[2]) toneRaw(d[2], vol, force); return null; }
+  try {
+    const s = a.createBufferSource(), g = a.createGain(); s.buffer = b;
+    g.gain.value = d[1] * vol * clamp((prefs.notifVol ?? 70) / 70, 0, 1.5) * .9;
+    s.connect(g).connect(a.destination); s.start(); s.onended = () => { try { g.disconnect(); } catch (_) {} };
+    return s;
+  } catch (_) { return null; }
+}
+/** старые вызовы tone(TONES.x) — теперь настоящие звуки */
+const TONE2SFX = new Map(Object.entries(TONES).map(([k, v]) => [v, k === 'ring' ? 'ringback' : k]));
+export function tone(seq, vol = 1) { const n = TONE2SFX.get(seq); if (n) { sfx(n, vol); return; } if (sfxOn('ui')) toneRaw(seq, vol); }
+function toneRaw(seq, vol = 1, force = false) {
+  if (!prefs.sound && !force) return;
   const a = actx(); if (!a) return;
   try {
     const g0 = .07 * (prefs.notifVol / 70) * vol; let t = a.currentTime + .01;
@@ -54,10 +103,6 @@ export function tone(seq, vol = 1) {
     }
   } catch (_) {}
 }
-export const TONES = {
-  msg: [[880, .05], [1175, .08]], mention: [[988, .06], [1319, .06], [1568, .1]], join: [[523, .06], [784, .1]], leave: [[784, .06], [523, .1]],
-  ring: [[440, .15], [554, .15]], ok: [[659, .05], [988, .09]], err: [[330, .08], [262, .14]], friend: [[523, .06], [659, .06], [784, .1]],
-};
 let voices = [];
 function loadVoices() { try { voices = speechSynthesis.getVoices(); bus.emit('voices', voices); } catch (_) {} }
 try { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; } catch (_) {}
@@ -74,7 +119,7 @@ export const dnd = () => prefs.dnd && prefs.dnd > Date.now();
 /** уведомление: звук + голос + мигание в панели задач (если окно не в фокусе) */
 export async function notify({ tone: t = 'msg', say, force } = {}) {
   if (dnd() && !force) return;
-  tone(TONES[t] || TONES.msg);
+  sfx(SFX[t] ? t : 'msg');
   if (say) speak(say);
   if (prefs.flash && !(await focused())) attention();
   // браузерный режим: вкладка свёрнута — показываем системное уведомление
@@ -101,7 +146,7 @@ export function toast({ ava, icon, title, sub, tag, dur = 0, cd = 0, actions = [
   return t;
 }
 export function closeToast(t) { if (!t || !t.isConnected || t.classList.contains('out')) return; t.classList.add('out'); setTimeout(() => t.remove(), 280); }
-export const fail = e => { tmsg('err', String((e && e.message) || e)); tone(TONES.err); };
+export const fail = e => { tmsg('err', String((e && e.message) || e)); sfx('err'); };
 
 /* ---------- окна ---------- */
 const wback = $('.js-wback'); let openWin = null, lastFocus = null;
@@ -141,7 +186,7 @@ export function closeW(force) {
   const w = $(`.win[data-win="${openWin}"]`, wback);
   if (!force && w && w.dataset.lock) return;
   ghost(w); wback.classList.remove('on');
-  const n = openWin; openWin = null; CLOSE[n] && CLOSE[n]();
+  const n = openWin; openWin = null; CLOSE[n] && CLOSE[n](); bus.emit('win', '');
   if (lastFocus && document.contains(lastFocus) && lastFocus.focus) lastFocus.focus({ preventScroll: true });
 }
 wback.addEventListener('click', e => { if (e.target === wback) closeW(); });

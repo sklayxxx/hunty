@@ -2,7 +2,7 @@
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -618,7 +618,9 @@ impl Store {
     fn edited(&self, m: &Msg) -> Option<&Msg> {
         let ms = self.metas.get(&m.room)?.get(&m.id)?;
         // с v0.3 править можно 30 секунд после отправки: поздние правки (часы те же — автора) не применяем
-        let late = |x: &Msg| m.ts >= EDIT_RULE_SINCE && x.ts > m.ts + EDIT_WINDOW_MS + 10_000;
+        // в «Избранном» (только моё) править можно сколько угодно
+        let mine = self.rooms.get(&m.room).map(|r| r.kind == "self").unwrap_or(false);
+        let late = |x: &Msg| !mine && m.ts >= EDIT_RULE_SINCE && x.ts > m.ts + EDIT_WINDOW_MS + 10_000;
         ms.iter().filter(|x| x.kind == "edit" && x.from == m.from && !late(x)).max_by(|a, b| (a.ts, &a.id).cmp(&(b.ts, &b.id)))
     }
 
@@ -687,6 +689,103 @@ impl Store {
         v
     }
 
+    /// Зал славы: сообщения, которые наградили 🏆 (в личке хватит одного кубка, в группе — двух)
+    /// или завалили реакциями, и награды недели. Считается из общей истории — у всех выходит одинаково.
+    /// week — начало недели (мс), tz — смещение часового пояса в минутах (как getTimezoneOffset в JS).
+    pub fn hall(&self, week: u64, tz: i64) -> Value {
+        const CUP: &str = "\u{1F3C6}";
+        let mut entries: Vec<(u64, Value)> = vec![];
+        let (mut talk, mut stk, mut night, mut gave, mut got): (HashMap<&str, u64>, HashMap<&str, u64>, HashMap<&str, u64>, HashMap<&str, u64>, HashMap<&str, u64>) =
+            Default::default();
+        let mut meme: Option<(u64, u64, &Msg)> = None;
+        for (rid, r) in &self.rooms {
+            if r.pending || (r.kind != "dm" && r.kind != "group") {
+                continue;
+            }
+            let dm = r.kind == "dm";
+            let metas = self.metas.get(rid);
+            for m in self.msgs(rid) {
+                if m.kind == "react" {
+                    if m.ts >= week && m.data.get("on").and_then(|y| y.as_bool()).unwrap_or(true) {
+                        *gave.entry(m.from.as_str()).or_default() += 1;
+                    }
+                    continue;
+                }
+                if is_meta(&m.kind) || m.kind == "sys" {
+                    continue;
+                }
+                if m.ts >= week {
+                    *talk.entry(m.from.as_str()).or_default() += 1;
+                    if m.kind == "sticker" {
+                        *stk.entry(m.from.as_str()).or_default() += 1;
+                    }
+                    let h = ((m.ts / 60_000) as i64 - tz).rem_euclid(1440) / 60;
+                    if h < 5 {
+                        *night.entry(m.from.as_str()).or_default() += 1;
+                    }
+                }
+                let Some(ms) = metas.and_then(|x| x.get(&m.id)) else { continue };
+                // (эмодзи, кто) → (ts, вкл); свои реакции на своё не считаются
+                let mut rs: BTreeMap<(&str, &str), (u64, bool)> = BTreeMap::new();
+                for x in ms.iter().filter(|x| x.kind == "react" && x.from != m.from) {
+                    let e = x.data.get("e").and_then(|y| y.as_str()).unwrap_or("");
+                    if e.is_empty() || e.len() > 32 {
+                        continue;
+                    }
+                    let on = x.data.get("on").and_then(|y| y.as_bool()).unwrap_or(true);
+                    let k = (e, x.from.as_str());
+                    if rs.get(&k).map(|(t, _)| x.ts >= *t).unwrap_or(true) {
+                        rs.insert(k, (x.ts, on));
+                    }
+                }
+                let live: Vec<(&str, &str, u64)> = rs.into_iter().filter(|(_, (_, on))| *on).map(|((e, p), (t, _))| (e, p, t)).collect();
+                if live.is_empty() {
+                    continue;
+                }
+                let total = live.len() as u64;
+                if m.ts >= week {
+                    *got.entry(m.from.as_str()).or_default() += total;
+                    if total >= 2 && meme.map(|(n, t, _)| (total, m.ts) > (n, t)).unwrap_or(true) {
+                        meme = Some((total, m.ts, m));
+                    }
+                }
+                let mut cups: Vec<u64> = live.iter().filter(|x| x.0 == CUP).map(|x| x.2).collect();
+                cups.sort_unstable();
+                let people: BTreeSet<&str> = live.iter().map(|x| x.1).collect();
+                let need = if dm { 1 } else { 2 };
+                let (why, at) = if cups.len() >= need {
+                    ("cup", cups[need - 1])
+                } else if (dm && total >= 4) || (!dm && people.len() >= 3 && total >= 5) {
+                    ("many", live.iter().map(|x| x.2).max().unwrap_or(m.ts))
+                } else {
+                    continue;
+                };
+                let mut v = self.view(m);
+                if let Value::Object(o) = &mut v {
+                    o.insert("why".into(), json!(why));
+                    o.insert("at".into(), json!(at));
+                    o.insert("cups".into(), json!(cups.len()));
+                }
+                entries.push((at, v));
+            }
+        }
+        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        // победитель — у кого больше; при равенстве — меньший peer id (одинаково у всех)
+        let top = |h: &HashMap<&str, u64>, min: u64| -> Option<(String, u64)> {
+            h.iter().filter(|(_, n)| **n >= min).max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0))).map(|(p, n)| (p.to_string(), *n))
+        };
+        let mut awards = vec![];
+        if let Some((n, _, m)) = meme {
+            awards.push(json!({ "k": "meme", "peer": m.from, "n": n, "room": m.room, "id": m.id, "msg": self.view(m) }));
+        }
+        for (k, h, min) in [("talk", &talk, 10), ("stk", &stk, 3), ("night", &night, 3), ("gave", &gave, 5), ("star", &got, 5)] {
+            if let Some((p, n)) = top(h, min) {
+                awards.push(json!({ "k": k, "peer": p, "n": n }));
+            }
+        }
+        json!({ "entries": entries.into_iter().take(300).map(|x| x.1).collect::<Vec<_>>(), "awards": awards, "week": week })
+    }
+
     /// Страница видимых сообщений (служебные уже применены).
     pub fn page(&self, room: &str, before: Option<u64>, limit: usize) -> Vec<Value> {
         let v = self.msgs(room);
@@ -727,6 +826,24 @@ impl Store {
                 if !norm(text).contains(&q) && !norm(name).contains(&q) {
                     continue;
                 }
+            }
+            total += 1;
+            if out.len() < limit {
+                out.push(self.view(m));
+            }
+        }
+        (total, out)
+    }
+
+    /// Картинки и видео чата, новые сверху — окно «Клипы и скрины».
+    pub fn media_list(&self, room: &str, limit: usize) -> (usize, Vec<Value>) {
+        let mut total = 0;
+        let mut out = vec![];
+        for m in self.msgs(room).iter().rev() {
+            let mime = m.data.get("mime").and_then(|x| x.as_str()).unwrap_or("");
+            let ok = m.kind == "image" || (m.kind == "file" && (mime.starts_with("video/") || mime.starts_with("image/")));
+            if !ok {
+                continue;
             }
             total += 1;
             if out.len() < limit {

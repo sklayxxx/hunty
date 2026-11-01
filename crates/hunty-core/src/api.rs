@@ -350,6 +350,49 @@ impl Node {
                 let id = self.ensure_dm(&p).ok_or("кривой peer")?;
                 Ok(self.room_json(&id))
             }
+            "self_open" => {
+                // «Избранное», как Saved Messages в Telegram: чат только со мной — никому не уходит
+                let tail: String = self.me_s.chars().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect();
+                let id = format!("s-{tail}");
+                if !self.st.rooms.contains_key(&id) {
+                    let now = now_ms();
+                    let me = self.profile();
+                    let mut members = std::collections::BTreeMap::new();
+                    members.insert(self.me_s.clone(), Member { peer: self.me_s.clone(), nick: me.nick.clone(), ava: me.ava.clone(), role: "owner".into(), ts: now, gone: false });
+                    self.st.rooms.insert(
+                        id.clone(),
+                        Room {
+                            id: id.clone(),
+                            kind: "self".into(),
+                            name: "Избранное".into(),
+                            color: String::new(),
+                            pic: String::new(),
+                            secret: String::new(),
+                            owner: self.me_s.clone(),
+                            members,
+                            created: now,
+                            invite: "none".into(),
+                            voice: false,
+                            meta_ts: now,
+                            muted: false,
+                            read_ts: now,
+                            pending: false,
+                            inviter: String::new(),
+                            inviter_addrs: vec![],
+                            clear_ts: 0,
+                        },
+                    );
+                    self.st.save_rooms();
+                    let r = self.room_json(&id);
+                    self.emit("room", json!({ "room": r }));
+                }
+                Ok(self.room_json(&id))
+            }
+            "hall" => {
+                let week = v.get("week").and_then(|x| x.as_u64()).unwrap_or(0);
+                let tz = v.get("tz").and_then(|x| x.as_i64()).unwrap_or(0);
+                Ok(self.st.hall(week, tz))
+            }
             "room_create" => {
                 let name: String = s(&v, "name").trim().chars().take(32).collect();
                 if name.is_empty() {
@@ -612,6 +655,12 @@ impl Node {
                 let (total, msgs) = self.st.search(&id, &s(&v, "q"), &s(&v, "from"), limit);
                 Ok(json!({ "room": id, "msgs": msgs, "total": total }))
             }
+            "media_list" => {
+                let id = s(&v, "room");
+                let limit = v.get("limit").and_then(|x| x.as_u64()).unwrap_or(120).min(500) as usize;
+                let (total, msgs) = self.st.media_list(&id, limit);
+                Ok(json!({ "room": id, "msgs": msgs, "total": total }))
+            }
             "msgs_to" => {
                 // догрузить историю до сообщения с ts включительно (+ немного постарше для контекста)
                 let id = s(&v, "room");
@@ -664,7 +713,8 @@ impl Node {
                 if text.trim().is_empty() && t.kind == "text" {
                     return Err("пустое сообщение — лучше удали".into());
                 }
-                if now_ms().saturating_sub(t.ts) > EDIT_WINDOW_MS + 5_000 {
+                let mine = self.st.rooms.get(&id).map(|r| r.kind == "self").unwrap_or(false);
+                if !mine && now_ms().saturating_sub(t.ts) > EDIT_WINDOW_MS + 5_000 {
                     return Err("править можно только 30 секунд после отправки".into());
                 }
                 self.post_meta(&id, "edit", &text, json!({ "to": to }))
@@ -817,6 +867,9 @@ impl Node {
                 let id = if c == "voice_join" { s(&v, "room") } else { self.voice.as_ref().map(|x| x.0.clone()).ok_or("ты не в голосе")? };
                 if !self.member_ok(&id, &self.me_s.clone()) {
                     return Err("ты не в этой хате".into());
+                }
+                if self.st.rooms.get(&id).map(|r| r.kind == "self").unwrap_or(false) {
+                    return Err("в «Избранном» звонить некому".into());
                 }
                 let mut st: VoiceState = v.get("state").cloned().and_then(|x| serde_json::from_value(x).ok()).unwrap_or_default();
                 if c == "voice_join" {

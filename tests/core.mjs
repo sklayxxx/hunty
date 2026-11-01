@@ -97,6 +97,27 @@ try {
   await B.cmd('ev', { room: g, kind: 'typing', data: {} });
   await A.until(e => e.ev === 'ev' && e.kind === 'typing' && e.from === sb.me.peer);
   ok(true, 'эфемерные события (печатает…)');
+  // зал славы: в группе нужно два 🏆 от других
+  const hm = await A.cmd('send', { room: g, text: 'легендарный момент' });
+  await sleep(800);
+  await B.cmd('react', { room: g, id: hm.id, e: '🏆' });
+  await C.cmd('react', { room: g, id: hm.id, e: '🏆' });
+  let hall = null;
+  for (let i = 0; i < 40; i++) { hall = await A.cmd('hall', { week: 0, tz: 0 }); if ((hall.entries || []).some(x => x.id === hm.id)) break; await sleep(250); }
+  const he = (hall.entries || []).find(x => x.id === hm.id);
+  ok(he && he.why === 'cup', 'зал славы: два кубка в группе → момент в зале');
+  ok(Array.isArray(hall.awards), 'зал славы: награды недели считаются');
+  // клипы и скрины: картинки и видео чата
+  const px = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await A.cmd('send', { room: g, kind: 'image', text: 'скрин', data: { src: px } });
+  const ml = await A.cmd('media_list', { room: g, limit: 50 });
+  ok(ml.total >= 1 && ml.msgs.some(m => m.kind === 'image'), 'клипы и скрины: media_list видит картинку');
+  // избранное — чат только с собой
+  const so = await A.cmd('self_open');
+  const sid = (so.room || so).id;
+  ok(typeof sid === 'string' && sid.startsWith('s-'), 'избранное: чат с собой');
+  const sm = await A.cmd('send', { room: sid, text: 'заметка себе' });
+  ok(sm && sm.id, 'избранное: заметка сохранилась');
   // кик
   await A.cmd('room_kick', { room: g, peer: sc.me.peer });
   await C.until(e => e.ev === 'room_removed' && e.room === g, 15000);
