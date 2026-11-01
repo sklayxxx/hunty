@@ -161,19 +161,35 @@ pub struct Node {
     pub(crate) started: Instant,
     pub(crate) net_sig: String,
     pub(crate) quit: bool,
+    pub(crate) restoring: bool,
 }
 
 fn load_key(dir: &std::path::Path) -> Result<Keypair> {
     let p = dir.join("identity.key");
-    if let Ok(b) = std::fs::read(&p) {
-        if let Ok(k) = Keypair::from_protobuf_encoding(&b) {
-            return Ok(k);
-        }
-        let _ = std::fs::rename(&p, p.with_extension("bad"));
+    match std::fs::read(&p) {
+        Ok(b) => return Keypair::from_protobuf_encoding(&b)
+            .map_err(|e| anyhow::anyhow!("ключ аккаунта повреждён; восстанови бэкап: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+        Err(e) => return Err(anyhow::anyhow!("не удалось прочитать ключ аккаунта: {e}")),
     }
     let k = Keypair::generate_ed25519();
     write_atomic(&p, &k.to_protobuf_encoding()?)?;
     Ok(k)
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::testutil::TestDir;
+
+    #[test]
+    fn damaged_identity_is_never_replaced_with_a_new_account() {
+        let dir = TestDir::new();
+        let path = dir.path().join("identity.key");
+        std::fs::write(&path, b"damaged-key").unwrap();
+        assert!(load_key(dir.path()).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"damaged-key");
+    }
 }
 
 pub fn ip_of(a: &Multiaddr) -> Option<IpAddr> {
@@ -224,11 +240,13 @@ fn relay_of(a: &Multiaddr) -> Option<PeerId> {
 
 pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cmd>, mpsc::UnboundedReceiver<Value>)> {
     std::fs::create_dir_all(&dir)?;
+    crate::backup::recover(&dir)?;
     let key = load_key(&dir)?;
     let mut st = Store::open(&dir)?;
     if st.config.port == 0 {
         st.config.port = 20000 + (rand::random::<u16>() % 40000);
         st.save_config();
+        if let Some(e) = st.take_io_error() { return Err(anyhow::anyhow!(e)); }
     }
     let cfg = st.config.clone();
     let use_mdns = opts.mdns.unwrap_or(cfg.mdns);
@@ -380,6 +398,7 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
         started: Instant::now(),
         net_sig: String::new(),
         quit: false,
+        restoring: false,
     };
     node.refresh_allow();
     tracing::info!("hunty {VERSION}: я {}", node.me);
@@ -396,7 +415,11 @@ impl Node {
                 ev = self.swarm.select_next_some() => self.on_swarm(ev),
                 cmd = rx.recv() => match cmd {
                     Some((v, reply)) => {
-                        let r = self.on_cmd(v);
+                        let mut r = self.on_cmd(v);
+                        if let Some(e) = self.st.take_io_error() {
+                            self.log("err", &e);
+                            r = Err(e);
+                        }
                         let _ = reply.send(r);
                         if self.quit { break; }
                     }
@@ -404,9 +427,12 @@ impl Node {
                 },
                 _ = tick.tick() => self.on_tick(),
             }
+            if let Some(e) = self.st.take_io_error() { self.log("err", e); }
         }
-        self.st.save_peers();
-        self.st.save_rooms();
+        if !self.restoring {
+            self.st.save_peers();
+            self.st.save_rooms();
+        }
         tracing::info!("узел остановлен");
     }
 
@@ -1172,7 +1198,8 @@ impl Node {
             if let Ok(p) = inviter.parse::<PeerId>() {
                 targets.push(p);
             }
-            targets.extend(self.join_cands.iter().cloned());
+            // Until a room has authenticated membership, trust the peer named in
+            // the invite only. DHT providers are not proof of room membership.
             let targets: Vec<PeerId> =
                 targets.into_iter().filter(|p| self.connected(p) && only.map(|o| o == *p).unwrap_or(true)).collect();
             if let Some(t) = targets.first().cloned() {

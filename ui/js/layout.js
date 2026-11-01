@@ -137,76 +137,28 @@ setMW(MW);
 })();
 new MutationObserver(() => { if (!mini.hidden) { placeMini(false); requestAnimationFrame(() => placeMini(false)); } }).observe(mini, { attributes: true, attributeFilter: ['hidden'] });
 
-/* ---------- жидкое стекло: преломление по краям, как в iOS (только Chromium/WebView2) ---------- */
-export const LGOK = /Chrome\//.test(navigator.userAgent) && !/Firefox|FxiOS/.test(navigator.userAgent);
-const SVGNS = 'http://www.w3.org/2000/svg';
-const lgDefs = document.createElementNS(SVGNS, 'svg');
-lgDefs.setAttribute('width', '0'); lgDefs.setAttribute('height', '0'); lgDefs.setAttribute('aria-hidden', 'true');
-lgDefs.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden'; document.body.prepend(lgDefs);
-let lgN = 0; const lgMaps = new Map(); // карты линз: держим последние 40, остальное выкидываем
-function lensMap(w, h, r, bez, k) {
-  const W = Math.max(2, Math.round(w * k)), H = Math.max(2, Math.round(h * k)); const key = [W, H, r, bez].join('x');
-  if (lgMaps.has(key)) { const v = lgMaps.get(key); lgMaps.delete(key); lgMaps.set(key, v); return v; }
-  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const im = x.createImageData(W, H), d = im.data; const cx = w / 2, cy = h / 2;
-  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-    const px = (i + .5) / k - cx, py = (j + .5) / k - cy; const qx = Math.abs(px) - (cx - r), qy = Math.abs(py) - (cy - r);
-    const sd = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r, ins = -sd; let dx = 0, dy = 0;
-    if (ins >= 0 && ins < bez) {
-      let nx, ny;
-      if (qx > 0 && qy > 0) { const l = Math.hypot(qx, qy) || 1; nx = qx / l * Math.sign(px); ny = qy / l * Math.sign(py); }
-      else if (qx > qy) { nx = Math.sign(px); ny = 0; } else { nx = 0; ny = Math.sign(py); }
-      const t = 1 - ins / bez, m = Math.pow(t, 2.5); dx = -nx * m; dy = -ny * m;
-    }
-    const o = (j * W + i) * 4; d[o] = 128 + dx * 127; d[o + 1] = 128 + dy * 127; d[o + 2] = 128; d[o + 3] = 255;
-  }
-  x.putImageData(im, 0, 0); const url = c.toDataURL(); lgMaps.set(key, url);
-  while (lgMaps.size > 40) lgMaps.delete(lgMaps.keys().next().value);
-  return url;
+/* ---------- стекло: CSS-блики без карт преломления и покадровых расчётов ---------- */
+export const LGOK = CSS.supports('backdrop-filter', 'blur(1px)') || CSS.supports('-webkit-backdrop-filter', 'blur(1px)');
+export function setGlass(mode) {
+  R.dataset.glass = mode === 'liquid' ? 'liquid' : 'matte';
+  R.classList.toggle('lg', mode === 'liquid' && !prefs.lite && !reduce && LGOK);
+  $$('.js-glassmode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === mode)));
 }
-function lgBuild(el) {
-  const w = el.offsetWidth, h = el.offsetHeight; if (w < 8 || h < 8) return;
-  const r = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, w / 2, h / 2);
-  const sig = w + 'x' + h + 'r' + r; if (el._lgSig === sig) return; el._lgSig = sig;
-  const bez = Math.max(7, Math.min(r * .6 + 8, 28, Math.min(w, h) / 2)), Sc = bez * 2.1, k = w * h > 160000 ? .5 : 1;
-  let f = el._lgF; if (!f) { f = document.createElementNS(SVGNS, 'filter'); f.id = 'lg' + (++lgN); lgDefs.appendChild(f); el._lgF = f; }
-  const ch = (n, res, m) => `<feDisplacementMap in="SourceGraphic" in2="m" scale="${(Sc * m).toFixed(1)}" xChannelSelector="R" yChannelSelector="G" result="d${res}"/><feColorMatrix in="d${res}" type="matrix" values="${n}" result="${res}"/>`;
-  ['x', 'y'].forEach(a => f.setAttribute(a, '0')); f.setAttribute('width', w); f.setAttribute('height', h);
-  f.setAttribute('filterUnits', 'userSpaceOnUse'); f.setAttribute('primitiveUnits', 'userSpaceOnUse'); f.setAttribute('color-interpolation-filters', 'sRGB');
-  const map = lensMap(w, h, r, bez, k);
-  f.innerHTML = `<feImage href="${map}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="m"/>` +
-    ch('1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0', 'r', 1) + ch('0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0', 'g', 1.05) + ch('0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0', 'b', 1.1) +
-    '<feComposite in="r" in2="g" operator="arithmetic" k2="1" k3="1" result="rg"/><feComposite in="rg" in2="b" operator="arithmetic" k2="1" k3="1"/>';
-  const on = () => { el.style.setProperty('--lgf', `url(#${f.id})`); el.classList.add('lqf'); };
-  if (el.classList.contains('lqf')) on(); else { const im = new Image(); im.src = map; (im.decode ? im.decode() : Promise.resolve()).then(() => requestAnimationFrame(on), on); }
+export function setGA(value = prefs.glassA) {
+  const v = clamp(Number.isFinite(+value) ? +value : 60, 0, 100);
+  R.style.setProperty('--pa', (.92 - v * .0062).toFixed(3));
+  R.style.setProperty('--la', (.5 - v * .0042).toFixed(3));
 }
-// пересчёт карты — не на каждый кадр ресайза, а когда размер устоялся (иначе на слабых компах всё встаёт колом)
-const lgLater = el => { clearTimeout(el._lgT); el._lgT = setTimeout(() => { if (el.isConnected && R.classList.contains('lg')) lgBuild(el); }, 160); };
-const lgRO = 'ResizeObserver' in window ? new ResizeObserver(es => es.forEach(e => lgLater(e.target))) : null;
-function lgAttach(el) { if (!LGOK || el._lgOn) return; el._lgOn = 1; if (R.classList.contains('lg')) lgBuild(el); lgRO && lgRO.observe(el); }
-function lgDetach(el) { if (!el._lgOn) return; el._lgOn = 0; clearTimeout(el._lgT); lgRO && lgRO.unobserve(el); if (el._lgF) { el._lgF.remove(); el._lgF = null; } el._lgSig = ''; }
-const LGSEL = '.island.glass,.tools,.vpop,.stk,.wback>.win,.field,.toast';
-export const lgScan = (root = document) => $$(LGSEL, root).forEach(lgAttach);
-export function setGlass(m) {
-  const on = LGOK && m === 'liquid' && !prefs.lite, was = R.classList.contains('lg');
-  R.classList.toggle('lg', on);
-  if (on && !was) $$(LGSEL).forEach(el => { if (el._lgOn) { el._lgSig = ''; lgBuild(el); } });
-  $$('.js-glassmode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === m)));
-}
-export function setGA(v = prefs.glassA) { v = +v; R.style.setProperty('--pa', (.92 - v * .0062).toFixed(3)); R.style.setProperty('--la', (.5 - v * .0042).toFixed(3)); }
 $('.js-glassmode').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   setPref('glass', b.dataset.g); setGlass(b.dataset.g);
-  tmsg('ok', b.dataset.g === 'liquid' ? (LGOK ? 'стекло: жидкое — края преломляют то, что под ними' : 'тут преломление не поддерживается — будет матовое') : 'стекло: только матовое — меньше нагрузка на видюху');
+  tmsg('ok', b.dataset.g === 'liquid' ? 'Жидкое стекло: мягкий свет и прозрачные края' : 'Матовое стекло: меньше прозрачности');
 });
-if (!LGOK) $('.js-glassmode button[data-g="liquid"]').title = 'в этом браузере преломление не поддерживается — будет матовое';
-bus.on('pref', (k, v) => { if (k === 'glassA') setGA(v); if (k === 'lite') setGlass(prefs.glass || 'liquid'); });
+bus.on('pref', (key, value) => {
+  if (key === 'glassA') setGA(value);
+  if (key === 'lite' || key === 'glass') setGlass(prefs.glass || 'liquid');
+});
 export function initLayout() {
   setGlass(prefs.glass || 'liquid'); setGA();
-  lgScan();
-  // тосты приходят и уходят: фильтр стекла убираем вместе с тостом, чтобы не копились
-  new MutationObserver(ms => ms.forEach(m => {
-    m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.matches(LGSEL)) lgAttach(n); });
-    m.removedNodes.forEach(n => { if (n.nodeType === 1) lgDetach(n); });
-  })).observe($('.js-toasts'), { childList: true });
   applyLay();
 }

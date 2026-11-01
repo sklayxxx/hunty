@@ -4,12 +4,43 @@
 //! mDNS в локалке, UPnP/hole punching (DCUtR) и ретрансляторы (в т.ч. через друзей).
 //! UI общается с ядром JSON-командами (`Handle::cmd`) и получает поток событий.
 mod api;
+mod backup;
 pub mod codes;
 mod node;
 pub mod proto;
 pub mod store;
 pub mod util;
 mod wire;
+
+#[cfg(test)]
+mod testutil {
+    use crate::store::{Member, Room};
+    use std::path::{Path, PathBuf};
+
+    pub struct TestDir(PathBuf);
+    impl TestDir {
+        pub fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("hunty-regression-{}", crate::util::rand_hex(10)));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        pub fn path(&self) -> &Path { &self.0 }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+    pub fn member(peer: &str, role: &str) -> Member {
+        Member { peer: peer.into(), role: role.into(), ts: 1, nick: peer.into(), ava: "mob:pig".into(), gone: false }
+    }
+    pub fn room() -> Room {
+        serde_json::from_value(serde_json::json!({
+            "id":"r", "kind":"group", "name":"Test", "owner":"owner", "created":1,
+            "invite":"admin", "secret":"secret", "members": {
+                "owner":member("owner","owner"), "admin":member("admin","admin"), "user":member("user","member")
+            }
+        })).unwrap()
+    }
+}
 
 pub use node::{Opts, VERSION};
 use serde_json::Value;

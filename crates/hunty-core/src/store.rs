@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::cell::RefCell;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -29,6 +30,36 @@ pub struct Profile {
     pub game: String,
     #[serde(default)]
     pub ts: u64,
+}
+
+/// A network profile is untrusted even when its peer is a friend.
+pub fn image_data_ok(value: &str, limit: usize) -> bool {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    if value.len() > limit { return false; }
+    let Some((head, body)) = value.split_once(',') else { return false };
+    matches!(head, "data:image/png;base64" | "data:image/jpeg;base64" | "data:image/jpg;base64" | "data:image/webp;base64" | "data:image/gif;base64" | "data:image/avif;base64")
+        && !body.is_empty() && STANDARD.decode(body).is_ok()
+}
+
+pub fn avatar_ok(value: &str) -> bool {
+    value.is_empty() || value.strip_prefix("mob:").map(|k| !k.is_empty() && k.len() <= 32 && k.bytes().all(|c| c.is_ascii_lowercase() || c == b'-')).unwrap_or(false)
+        || image_data_ok(value, 96 * 1024)
+}
+
+impl Profile {
+    pub fn sanitized(mut self) -> Self {
+        if !avatar_ok(&self.ava) { self.ava.clear(); }
+        if !(self.banner.is_empty() || self.banner.strip_prefix("g:").map(|s| s.len() <= 32 && s.bytes().all(|c| c.is_ascii_lowercase())).unwrap_or(false) || image_data_ok(&self.banner, 200 * 1024)) {
+            self.banner.clear();
+        }
+        self.nick = self.nick.chars().take(16).collect();
+        self.line = self.line.chars().take(64).collect();
+        self.bio = self.bio.chars().take(190).collect();
+        self.game = self.game.chars().take(48).collect();
+        self.status = self.status.chars().take(16).collect();
+        self.color = self.color.chars().take(32).collect();
+        self
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -143,6 +174,10 @@ pub const HEAVY: usize = 4096;
 pub const EDIT_WINDOW_MS: u64 = 30_000;
 /// Правило «30 секунд» действует для сообщений начиная с v0.3 — старые правки не пропадут.
 pub const EDIT_RULE_SINCE: u64 = 1793404800000;
+pub const MAX_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
+pub fn timestamp_ok(ts: u64) -> bool {
+    ts > 0 && ts <= crate::util::now_ms().saturating_add(MAX_CLOCK_SKEW_MS)
+}
 
 /// Служебные сообщения, которые меняют другие: реакция, правка, удаление у всех.
 pub fn is_meta(kind: &str) -> bool {
@@ -267,6 +302,10 @@ pub struct Store {
     hidden: HashMap<String, HashMap<String, u64>>,
     /// файлы, которые надо переписать без удалённого (освободить место)
     dirty: HashSet<String>,
+    io_error: RefCell<Option<String>>,
+    // Preserve original rows when local clock problems make their time suspect.
+    // Compacting only the accepted rows would otherwise destroy those messages.
+    deferred_time_rooms: HashSet<String>,
 }
 
 fn load<T: DeserializeOwned + Default>(p: &Path) -> T {
@@ -285,8 +324,13 @@ fn load<T: DeserializeOwned + Default>(p: &Path) -> T {
 
 pub fn write_atomic(p: &Path, data: &[u8]) -> Result<()> {
     let tmp = p.with_extension("tmp");
-    fs::write(&tmp, data).with_context(|| format!("запись {}", tmp.display()))?;
+    let mut f = fs::File::create(&tmp).with_context(|| format!("запись {}", tmp.display()))?;
+    f.write_all(data)?;
+    f.sync_all()?;
+    drop(f);
     fs::rename(&tmp, p)?;
+    #[cfg(unix)]
+    if let Some(parent) = p.parent() { fs::File::open(parent)?.sync_all()?; }
     Ok(())
 }
 
@@ -322,6 +366,8 @@ impl Store {
             metas: HashMap::new(),
             hidden: HashMap::new(),
             dirty: HashSet::new(),
+            io_error: RefCell::new(None),
+            deferred_time_rooms: HashSet::new(),
         };
         let mut files = vec![];
         if let Ok(rd) = fs::read_dir(dir.join("msgs")) {
@@ -389,7 +435,10 @@ impl Store {
                 continue;
             }
             let Ok(mut m) = serde_json::from_slice::<Msg>(line) else { continue };
-            if safe_name(&m.room) != stem {
+            if safe_name(&m.room) != stem { continue; }
+            if !timestamp_ok(m.ts) {
+                tracing::warn!("пропустил сообщение {}: недопустимое время", m.id);
+                self.deferred_time_rooms.insert(m.room.clone());
                 continue;
             }
             if self.is_hidden(&m.room, &m.id) || self.rooms.get(&m.room).map(|r| m.ts <= r.clear_ts).unwrap_or(false) {
@@ -413,11 +462,13 @@ impl Store {
             Ok(b) => {
                 if let Err(e) = write_atomic(&p, &b) {
                     tracing::error!("не смог сохранить {name}: {e}");
+                    *self.io_error.borrow_mut() = Some(format!("не удалось сохранить {name}: {e}"));
                 }
             }
-            Err(e) => tracing::error!("serde {name}: {e}"),
+            Err(e) => { *self.io_error.borrow_mut() = Some(format!("не удалось сохранить {name}: {e}")); }
         }
     }
+    pub fn take_io_error(&self) -> Option<String> { self.io_error.borrow_mut().take() }
     pub fn save_profile(&self) {
         self.json("profile.json", &self.profile)
     }
@@ -480,7 +531,7 @@ impl Store {
         }
         b.extend_from_slice(line.as_bytes());
         b.push(b'\n');
-        match f.write_all(&b) {
+        match f.write_all(&b).and_then(|_| f.sync_data()) {
             Ok(_) => Some(len + broken as u64),
             Err(e) => {
                 tracing::error!("не смог дописать {}: {e}", p.display());
@@ -535,38 +586,37 @@ impl Store {
     }
 
     /// true — новое сообщение (записано на диск). В памяти остаётся лёгкая копия.
-    pub fn add_msg(&mut self, m: Msg) -> bool {
+    pub fn add_msg(&mut self, m: Msg) -> std::result::Result<bool, String> {
+        if !timestamp_ok(m.ts) { return Err("недопустимое время сообщения: проверь часы на устройстве".into()); }
         let room = m.room.clone();
         if self.rooms.get(&room).map(|r| m.ts <= r.clear_ts).unwrap_or(false) {
-            return false;
+            return Ok(false);
         }
         if self.has_msg(&room, &m.id) || self.is_hidden(&room, &m.id) {
-            return false;
+            return Ok(false);
         }
         if !is_meta(&m.kind) && self.killed(&room, &m) {
             self.ids.entry(room).or_default().insert(m.id.clone(), m.ts);
-            return false;
+            return Ok(false);
         }
         let line = match serde_json::to_string(&m) {
             Ok(l) => l,
-            Err(_) => return false,
+            Err(e) => return Err(format!("не удалось подготовить сообщение: {e}")),
         };
-        let off = self.append(&room, &line);
+        let off = self.append(&room, &line).ok_or("сообщение не сохранено: проверь свободное место и доступ к папке данных")?;
         let mut m = m;
         if heavy_len(&m) > HEAVY {
-            if let Some(o) = off {
-                strip(&mut m);
-                m.at = Some((o, line.len() as u32));
-            }
+            strip(&mut m);
+            m.at = Some((off, line.len() as u32));
         }
         let del = (m.kind == "del").then(|| (target(&m).unwrap_or("").to_string(), m.from.clone()));
         if !self.insert_mem(m) {
-            return false;
+            return Ok(false);
         }
         if let Some((t, by)) = del {
             self.apply_del(&room, &t, &by);
         }
-        true
+        Ok(true)
     }
 
     pub fn has_msg(&self, room: &str, id: &str) -> bool {
@@ -615,12 +665,17 @@ impl Store {
         out
     }
 
+    pub fn sync_inventory(&self, room: &str) -> (u64, Vec<String>) {
+        let since = self.rooms.get(room).map(|r| r.clear_ts).unwrap_or(0);
+        (since, self.have_since(room, since))
+    }
+
     fn edited(&self, m: &Msg) -> Option<&Msg> {
         let ms = self.metas.get(&m.room)?.get(&m.id)?;
         // с v0.3 править можно 30 секунд после отправки: поздние правки (часы те же — автора) не применяем
         // в «Избранном» (только моё) править можно сколько угодно
         let mine = self.rooms.get(&m.room).map(|r| r.kind == "self").unwrap_or(false);
-        let late = |x: &Msg| !mine && m.ts >= EDIT_RULE_SINCE && x.ts > m.ts + EDIT_WINDOW_MS + 10_000;
+        let late = |x: &Msg| !mine && m.ts >= EDIT_RULE_SINCE && x.ts > m.ts.saturating_add(EDIT_WINDOW_MS + 10_000);
         ms.iter().filter(|x| x.kind == "edit" && x.from == m.from && !late(x)).max_by(|a, b| (a.ts, &a.id).cmp(&(b.ts, &b.id)))
     }
 
@@ -891,6 +946,7 @@ impl Store {
         self.metas.remove(room);
         self.hidden.remove(room);
         self.dirty.remove(room);
+        self.deferred_time_rooms.remove(room);
         let _ = fs::remove_file(self.path(room));
         let _ = fs::remove_file(self.hide_path(room));
         if let Some(r) = self.rooms.get_mut(room) {
@@ -908,6 +964,10 @@ impl Store {
     /// Переписать JSONL без удалённого. Тяжёлые строки копирую с диска как есть.
     pub fn compact(&mut self, room: &str) {
         self.dirty.remove(room);
+        if self.deferred_time_rooms.contains(room) {
+            tracing::warn!("не переписываю {room}: на диске есть сообщения с недопустимым временем; проверь часы");
+            return;
+        }
         let p = self.path(room);
         let tmp = self.dir.join("msgs").join(format!("{}.jsonl.tmp", safe_name(room)));
         let mut src = fs::File::open(&p).ok();
@@ -917,6 +977,7 @@ impl Store {
             Ok(f) => f,
             Err(e) => {
                 tracing::error!("не смог переписать {}: {e}", p.display());
+                self.dirty.insert(room.to_string());
                 return;
             }
         };
@@ -948,7 +1009,7 @@ impl Store {
             }
             off += line.len() as u64 + 1;
         }
-        let ok = ok && out.flush().is_ok();
+        let ok = ok && out.flush().is_ok() && out.get_ref().sync_all().is_ok();
         drop(out);
         drop(src);
         if !ok || fs::rename(&tmp, &p).is_err() {
@@ -988,9 +1049,90 @@ impl Store {
         self.metas.remove(room);
         self.hidden.remove(room);
         self.dirty.remove(room);
+        self.deferred_time_rooms.remove(room);
         let _ = fs::remove_file(self.path(room));
         let _ = fs::remove_file(self.hide_path(room));
         self.rooms.remove(room);
         self.save_rooms();
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    use crate::testutil::{room, TestDir};
+
+    fn msg(id: &str, ts: u64) -> Msg {
+        Msg { id:id.into(), room:"r".into(), from:"user".into(), ts, kind:"text".into(), text:"test".into(), data:Value::Null, reply:String::new(), sig:String::new(), at:None }
+    }
+
+    #[test]
+    fn failed_write_does_not_acknowledge_or_cache_message() {
+        let dir = TestDir::new();
+        let mut st = Store::open(dir.path()).unwrap();
+        st.rooms.insert("r".into(), room());
+        fs::create_dir(st.path("r")).unwrap();
+        assert!(st.add_msg(msg("failed", crate::util::now_ms())).is_err());
+        assert!(!st.has_msg("r", "failed"));
+        assert_eq!(st.count("r"), 0);
+    }
+
+    #[test]
+    fn saved_message_survives_reopen_and_future_time_is_rejected() {
+        let dir = TestDir::new();
+        let mut st = Store::open(dir.path()).unwrap();
+        st.rooms.insert("r".into(), room());
+        st.save_rooms();
+        assert!(st.add_msg(msg("ok", crate::util::now_ms())).unwrap());
+        assert!(st.add_msg(msg("poison", u64::MAX)).is_err());
+        assert!(!st.has_msg("r", "poison"));
+        drop(st);
+        assert_eq!(Store::open(dir.path()).unwrap().count("r"), 1);
+    }
+
+    #[test]
+    fn history_inventory_covers_old_gaps_but_respects_local_clear() {
+        let dir = TestDir::new();
+        let mut st = Store::open(dir.path()).unwrap();
+        st.rooms.insert("r".into(), room());
+        let now = crate::util::now_ms();
+        st.add_msg(msg("recent", now)).unwrap();
+        let (since, have) = st.sync_inventory("r");
+        let old_missing = msg("old-missing", now - 3_600_000);
+        assert!(old_missing.ts >= since && !have.contains(&old_missing.id));
+        st.clear("r", now - 60_000);
+        assert_eq!(st.sync_inventory("r").0, now - 60_000);
+    }
+
+    #[test]
+    fn config_write_failure_is_reported() {
+        let dir = TestDir::new();
+        let st = Store::open(dir.path()).unwrap();
+        fs::create_dir(dir.path().join("config.json")).unwrap();
+        st.save_config();
+        assert!(st.take_io_error().is_some());
+    }
+
+    #[test]
+    fn suspect_time_rows_are_preserved_on_disk() {
+        let dir = TestDir::new();
+        let mut st = Store::open(dir.path()).unwrap();
+        st.rooms.insert("r".into(), room()); st.save_rooms();
+        let line = serde_json::to_string(&msg("future", u64::MAX)).unwrap() + "\n";
+        fs::write(st.path("r"), &line).unwrap();
+        drop(st);
+        let mut st = Store::open(dir.path()).unwrap();
+        assert_eq!(st.count("r"), 0);
+        st.compact("r");
+        assert_eq!(fs::read_to_string(st.path("r")).unwrap(), line);
+    }
+
+    #[test]
+    fn profile_images_cannot_contain_markup_or_svg() {
+        assert!(!avatar_ok("data:image/x\" onerror=\"alert(1)"));
+        assert!(!avatar_ok("data:image/svg+xml;base64,PHN2Zz4="));
+        assert!(avatar_ok("mob:pig"));
+        assert!(image_data_ok("data:image/png;base64,aGVsbG8=", 100));
+        assert!(!image_data_ok("data:image/png;base64,aGVsbG8=", 5));
     }
 }

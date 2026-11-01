@@ -121,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
         let st = h.cmd(json!({ "cmd": "state" })).await.unwrap_or(Value::Null);
         if st["me"]["onboarded"] != json!(true) {
             // без --ava UI сам выберет моба по ключу; «pig» и «mob:pig» — одно и то же
-            let ava = arg("--ava").map(|a| if a.contains(':') { a } else { format!("mob:{a}") }).unwrap_or_else(|| "steve".into());
+            let ava = arg("--ava").map(|a| if a.contains(':') { a } else { format!("mob:{a}") }).unwrap_or_else(|| "mob:steve".into());
             if let Err(e) = h.cmd(json!({ "cmd": "onboard", "nick": nick, "ava": ava })).await {
                 eprintln!("onboard: {e}");
             }
@@ -132,6 +132,7 @@ async fn main() -> anyhow::Result<()> {
     let print = flag("--events");
     tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
+            if ev["ev"] == "restart_required" { RESTART.store(true, Ordering::SeqCst); }
             let s = ev.to_string();
             if print {
                 println!("{s}");

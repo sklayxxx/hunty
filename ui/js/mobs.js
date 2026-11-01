@@ -1,4 +1,5 @@
 // Аватарки-мобы: пиксель-арт 8×8 → SVG. Моба выдаёт система, на рандом.
+import { isImageData } from './image-data.js';
 const SKEL=['wWWgWWwW','WwWWWWWg','WWgWWwWW','WkkWWkkW','WWWKKWWW','gWWWWWWw','WkKkKkKW','wWWWWWWW'];
 export const MOBS={
   steve:{n:'Стив',p:{H:'#3b2614',h:'#2c1b0d',S:'#c69874',s:'#b0805c',w:'#ffffff',e:'#4836a8',n:'#8b5a40',m:'#6b3e26'},g:['HHhHHHhH','HhHHHHHH','HSSSSSSH','SSSSSSSS','SweSSewS','SSSnnSSS','SSmSSmSS','SSmmmmSS']},
@@ -50,7 +51,7 @@ export function mobURL(k){if(cache[k])return cache[k];const m=MOBS[k]||MOBS.cree
   return cache[k]='data:image/svg+xml;base64,'+btoa(svg)}
 /** профиль.ava: "mob:<ключ>" или data:image/… */
 export function mobKey(ava){return typeof ava==='string'&&ava.startsWith('mob:')?ava.slice(4):''}
-export function avaURL(ava,seed=''){const k=mobKey(ava);if(k&&MOBS[k])return mobURL(k);if(typeof ava==='string'&&ava.startsWith('data:image/'))return ava;
+export function avaURL(ava,seed=''){const k=mobKey(ava);if(k&&Object.hasOwn(MOBS,k))return mobURL(k);if(isImageData(ava) && ava.length <= 96 * 1024)return ava;
   let h=0;for(const c of String(seed))h=(h*31+c.charCodeAt(0))>>>0;return mobURL(MOBKEYS[h%MOBKEYS.length])}
 export const mobName=ava=>(MOBS[mobKey(ava)]||{}).n||'моб';
 export const randomMob=(not='')=>{const ks=MOBKEYS.filter(k=>'mob:'+k!==not);return 'mob:'+ks[Math.floor(Math.random()*ks.length)]};

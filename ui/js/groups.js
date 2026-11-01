@@ -97,7 +97,7 @@ async function doJoin(code) {
     const room = r.room || r;
     if (room && room.id) { S.rooms.set(room.id, room); joining = room.id; }
     if (r.already) { jst.innerHTML = `<div class="fnote ok">${ic('check')}Ты уже в «${esc(room.name)}»</div>`; setTimeout(() => { closeW(true); openChat(room.id); }, 600); return; }
-    jst.innerHTML = `<div class="fnote">${ic('radio-tower')}«${esc(room.name || 'группа')}» — стучусь к участникам. Если никого нет в сети, вступлю автоматически, когда кто-то появится.</div>`;
+    jst.innerHTML = `<div class="fnote">${ic('radio-tower')}«${esc(room.name || 'группа')}» — жду подтверждения от автора приглашения. Если он не в сети, вступлю автоматически, когда он появится.</div>`;
     renderLists();
   } catch (e) { jst.innerHTML = `<div class="fnote bad">${ic('x')}${esc(e.message)}</div>`; }
 }

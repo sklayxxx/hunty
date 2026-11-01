@@ -1,0 +1,74 @@
+/* Liquid glass: static highlights, one modest blur per surface, no SVG lens.
+   Small controls inherit the panel material instead of stacking backdrop layers. */
+:root {
+  --glass-blur: 16px;
+  --glass-edge: rgba(236,244,255,.16);
+  --glass-light: rgba(239,247,255,.13);
+  --dim: #acb5c6;
+  --pane-alpha-floor: .66;
+}
+.pane.glass, html.haswall .pane.glass {
+  background: linear-gradient(155deg,rgba(229,241,255,.065),transparent 36%,rgba(184,205,255,.025)),rgba(13,17,25,max(var(--pa),var(--pane-alpha-floor)));
+  border-color: rgba(220,234,255,.105);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(135%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(135%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14),inset 0 -1px 0 rgba(190,211,255,.035),0 16px 38px -24px #000;
+}
+.pane.glass::before, .wback>.win::before { display:none; }
+.pane.glass::after { opacity:.65; }
+.island.glass,.mini,.wback>.win,.cmenu,.toast,.vpop,.stk,.epk {
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(135%);
+  backdrop-filter:blur(var(--glass-blur)) saturate(135%);
+}
+html.lg .island.glass, html.lg .mini, html.lg .wback>.win,
+html.lg .cmenu, html.lg .toast, html.lg .vpop, html.lg .stk, html.lg .epk {
+  background: linear-gradient(155deg,rgba(247,251,255,.15),rgba(225,236,255,.035) 42%,rgba(159,190,235,.07)),rgba(19,23,32,max(var(--la),.48));
+  border:1px solid var(--glass-edge);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(150%);
+  backdrop-filter:blur(var(--glass-blur)) saturate(150%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.34),inset 1px 0 0 rgba(255,255,255,.07),inset 0 -1px 0 rgba(190,214,255,.09),0 14px 32px -20px rgba(0,0,0,.85);
+}
+html.lg .island.glass { border-radius:22px; }
+html.lg .wback>.win { border-radius:26px; --la:.78; }
+html.lg .toast, html.lg .vpop, html.lg .stk, html.lg .epk, html.lg .cmenu { --la:.8; }
+html.lg .glass::after {
+  background:linear-gradient(140deg,rgba(255,255,255,.65),rgba(224,240,255,.12) 22%,transparent 48%,rgba(187,214,255,.08) 72%,rgba(232,246,255,.32));
+}
+html.lg .island.glass::before, html.lg .toast::before, html.lg .vpop::before, html.lg .stk::before {
+  background:radial-gradient(110% 150% at 12% -65%,rgba(255,255,255,.16),transparent 65%);
+}
+/* Blur over scrolling text/video is costly. Use a readable tint on nested controls. */
+.field,.tools,.tmux,.tn,.scap .js-dmeta,.sq,.vclip .vcl-dl,.vclip .vcl-tag,
+.mdt .mdp,.mdt .mdx .gbtn.sm,.thint,.floater b,.camtag,.mi-who,.gtip,
+.lcard .lplay,.log .mact,.win.prof .wx.abs {
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+}
+.field { background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.025)),rgba(14,17,24,.72); }
+.tn,.scap .js-dmeta,.sq,.tools,.vclip .vcl-dl,.vclip .vcl-tag { background-color:rgba(12,15,22,.82); }
+.ws[aria-current="page"],.stab[aria-selected="true"] {
+  background:linear-gradient(180deg,rgba(242,248,255,.17),rgba(212,229,255,.065));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 3px 10px -6px #000;
+}
+/* Both modes work without backdrop-filter; keep text legible on bright wallpapers. */
+html[data-glass="matte"] { --glass-blur:8px; --pane-alpha-floor:.82; }
+html[data-glass="matte"] .island.glass { background-color:rgba(18,21,29,.88); }
+html.lite .wall { filter:none; transition:none; }
+html.lite .cmenu,html.lite .epk,html.lite .fres,html.lite .mepop,html.lite .skm-busy,html.lite .nudge .ng-card {
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+}
+html.lite .pane.glass,html.lite .island.glass,html.lite .mini,html.lite .wback>.win,
+html.lite .cmenu,html.lite .toast,html.lite .vpop,html.lite .stk,html.lite .epk {
+  background:#141821;
+}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+  .pane.glass,html.haswall .pane.glass,.island.glass,.mini,.wback>.win,.cmenu,.toast,.vpop,.stk,.epk { background-color:rgba(17,21,29,.94); }
+}
+@media (prefers-reduced-motion:reduce), (prefers-reduced-transparency:reduce) {
+  .glass,.pane.glass,html.haswall .pane.glass,.island.glass,.mini,.wback>.win,.cmenu,.toast,.vpop,.stk,.epk,.lbox,.fres,.nudge .ng-card {
+    -webkit-backdrop-filter:none!important;backdrop-filter:none!important;background-color:#141821!important;
+  }
+  .wall { filter:none; transition:none; }
+}
+@media (prefers-contrast:more) {
+  .glass,.pane.glass,html.haswall .pane.glass,.island.glass,.mini,.wback>.win,.cmenu,.toast,.vpop,.stk,.epk { background-color:#141821!important; border-color:rgba(255,255,255,.35); }
+}

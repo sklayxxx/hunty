@@ -27,6 +27,44 @@ pub fn room_rev(r: &Room) -> u64 {
     r.meta_ts.max(r.members.values().map(|m| m.ts).max().unwrap_or(0))
 }
 
+fn room_wire_ok(w: &RoomWire) -> bool {
+    let mut peers = HashSet::new();
+    w.kind == "group" && !w.id.is_empty() && w.id.len() <= 100
+        && w.id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        && w.members.len() <= 1024 && w.name.len() <= 256 && w.color.len() <= 32
+        && (w.pic.is_empty() || image_data_ok(&w.pic, 96 * 1024))
+        && w.secret.len() <= 128 && matches!(w.invite.as_str(), "all" | "admin" | "none")
+        && w.meta_ts <= now_ms().saturating_add(MAX_CLOCK_SKEW_MS)
+        && w.members.iter().any(|m| m.peer == w.owner)
+        && w.members.iter().all(|m| m.peer.parse::<PeerId>().is_ok() && peers.insert(&m.peer)
+            && matches!(m.role.as_str(), "member" | "admin" | "owner") && avatar_ok(&m.ava)
+            && (m.role != "owner" || m.peer == w.owner)
+            && m.ts <= now_ms().saturating_add(MAX_CLOCK_SKEW_MS))
+}
+
+fn member_change_ok(r: &Room, sender: &str, m: &Member) -> bool {
+    let admin = r.is_member(sender) && r.is_admin(sender);
+    if m.peer == r.owner && sender != r.owner {
+        return r.members.get(&m.peer) == Some(m);
+    }
+    match r.members.get(&m.peer) {
+        None => !m.gone && m.role == "member" && (admin || r.invite == "all"),
+        Some(old) => {
+            if old.role != m.role && !admin { return false; }
+            if old.gone && !m.gone && !admin { return false; }
+            if !old.gone && m.gone && m.peer != sender && !admin { return false; }
+            // Other people's profile edits also need an authenticated source.
+            admin || m.peer == sender || (old.nick == m.nick && old.ava == m.ava)
+        }
+    }
+}
+
+fn pending_join_ok(r: &Room, sender: &str, w: &RoomWire, me: &str) -> bool {
+    r.pending && r.inviter == sender && r.id == w.id && !r.secret.is_empty() && r.secret == w.secret
+        && w.members.iter().any(|m| m.peer == sender && !m.gone)
+        && w.members.iter().any(|m| m.peer == me && !m.gone)
+}
+
 impl Node {
     pub(crate) fn rel(&self, p: &PeerId) -> String {
         match self.st.friends.get(&p.to_string()).map(|f| &f.state) {
@@ -125,6 +163,7 @@ impl Node {
     }
 
     pub(crate) fn update_profile(&mut self, peer: &PeerId, p: Profile) {
+        let p = p.sanitized();
         let ps = peer.to_string();
         if p.nick.is_empty() {
             return;
@@ -160,6 +199,7 @@ impl Node {
     }
 
     fn process_hello(&mut self, peer: PeerId, profile: Profile, rel: String, rooms: Vec<RoomSync>, relay: bool, voice: Option<(String, VoiceState)>) {
+        let profile = profile.sanitized();
         let ps = peer.to_string();
         let first = !self.online.contains_key(&peer);
         let o = self.online.entry(peer).or_insert(Online { since: now_ms(), rtt: None, relay: false, rtt_sent: None });
@@ -223,7 +263,8 @@ impl Node {
                 continue;
             }
             let push = rs.rev != room_rev(r) && r.kind == "group";
-            if rs.last > self.st.last_ts(&rs.id).max(r.clear_ts) {
+            // Equal/newer local tails do not prove that older messages are present.
+            if rs.last > r.clear_ts {
                 self.sync_from(peer, &rs.id);
             }
             if push {
@@ -260,11 +301,9 @@ impl Node {
     }
 
     pub(crate) fn sync_from(&mut self, peer: PeerId, room: &str) {
-        let last = self.st.last_ts(room);
         // после «очистить историю» старое не докачиваю
-        let floor = self.st.rooms.get(room).map(|r| r.clear_ts).unwrap_or(0);
-        let since = if last == 0 { floor } else { last.saturating_sub(10 * 60 * 1000).max(floor) };
-        let have = self.st.have_since(room, since);
+        // сверяем всю оставшуюся историю: свежий хвост не исключает старые пробелы.
+        let (since, have) = self.st.sync_inventory(room);
         self.send(peer, Req::SyncReq { room: room.to_string(), since, have }, Pend::Sync(room.to_string()));
     }
 
@@ -377,7 +416,8 @@ impl Node {
     /// Слияние: участники — кто новее (ts), мета — у кого meta_ts больше и есть права.
     fn merge_room(&mut self, w: RoomWire, sender: &str) -> bool {
         let Some(r) = self.st.rooms.get_mut(&w.id) else { return false };
-        let sender_admin = r.is_admin(sender) || w.owner == sender && r.owner == sender;
+        if w.owner != r.owner || r.kind != "group" { return false; }
+        let sender_admin = r.is_member(sender) && r.is_admin(sender);
         let mut changed = false;
         for m in w.members {
             let take = match r.members.get(&m.peer) {
@@ -387,12 +427,7 @@ impl Node {
             if !take {
                 continue;
             }
-            let was_live = r.members.get(&m.peer).map(|l| !l.gone).unwrap_or(false);
-            if m.gone && was_live && m.peer != sender && !sender_admin {
-                continue;
-            }
-            let was_admin = r.members.get(&m.peer).map(|l| l.role == "admin").unwrap_or(false);
-            if m.role == "admin" && !was_admin && !sender_admin && m.peer != r.owner {
+            if !member_change_ok(r, sender, &m) {
                 continue;
             }
             r.members.insert(m.peer.clone(), m);
@@ -405,18 +440,16 @@ impl Node {
             r.invite = w.invite;
             r.voice = w.voice;
             r.meta_ts = w.meta_ts;
-            changed = true;
-        }
-        if !w.secret.is_empty() && w.secret != r.secret && (sender_admin || r.secret.is_empty()) {
-            r.secret = w.secret;
+            if !w.secret.is_empty() { r.secret = w.secret; }
             changed = true;
         }
         changed
     }
 
     fn on_room_push(&mut self, peer: PeerId, w: RoomWire) {
+        if !room_wire_ok(&w) { return; }
         self.on_room_push_inner(peer, w.clone());
-        if self.st.rooms.contains_key(&w.id) {
+        if self.member_ok(&w.id, &peer.to_string()) {
             self.learn_addrs(&w);
         }
     }
@@ -462,7 +495,7 @@ impl Node {
                 self.sync_from(peer, &id);
             }
             Some((true, _, _)) => {
-                if !(sender_listed && me_listed) {
+                if !self.st.rooms.get(&id).map(|r| pending_join_ok(r, &ps, &w, &me)).unwrap_or(false) {
                     return;
                 }
                 if let Some(r) = self.st.rooms.get_mut(&id) {
@@ -470,12 +503,19 @@ impl Node {
                     r.owner = w.owner.clone();
                     r.created = w.created;
                     r.kind = w.kind.clone();
+                    r.name = w.name.clone();
+                    r.color = w.color.clone();
+                    r.pic = w.pic.clone();
+                    r.invite = w.invite.clone();
+                    r.voice = w.voice;
+                    r.meta_ts = w.meta_ts;
+                    r.members = w.members.iter().map(|m| (m.peer.clone(), m.clone())).collect();
                 }
-                self.merge_room(w, &ps);
                 self.finish_join(peer, &id);
             }
             Some((false, was_member, secret)) => {
-                if !was_member && !(sender_listed && !w.secret.is_empty() && w.secret == secret) {
+                if !was_member && !(sender_listed && !w.secret.is_empty() && w.secret == secret
+                    && self.st.rooms.get(&id).map(|r| r.invite == "all" && !r.members.contains_key(&ps)).unwrap_or(false)) {
                     return;
                 }
                 let changed = self.merge_room(w, &ps);
@@ -525,6 +565,7 @@ impl Node {
     }
 
     fn on_join(&mut self, peer: PeerId, room: String, secret: String, profile: Profile) -> Resp {
+        let profile = profile.sanitized();
         let ps = peer.to_string();
         let Some(r) = self.st.rooms.get_mut(&room) else { return Resp::Err { e: "нет такой хаты".into() } };
         if r.pending || r.kind != "group" {
@@ -534,7 +575,13 @@ impl Node {
             return Resp::Err { e: "инвайт устарел — попроси новый".into() };
         }
         let was = r.is_member(&ps);
-        let role = r.members.get(&ps).map(|m| m.role.clone()).filter(|x| !x.is_empty()).unwrap_or_else(|| "member".into());
+        if !was && r.invite != "all" && !r.is_admin(&self.me_s) {
+            return Resp::Err { e: "вступление подтверждает администратор".into() };
+        }
+        if r.members.get(&ps).map(|m| m.gone).unwrap_or(false) && !r.is_admin(&self.me_s) {
+            return Resp::Err { e: "повторное вступление подтверждает администратор".into() };
+        }
+        let role = r.members.get(&ps).filter(|m| !m.gone).map(|m| m.role.clone()).filter(|x| !x.is_empty()).unwrap_or_else(|| "member".into());
         r.members.insert(ps.clone(), Member { peer: ps.clone(), nick: profile.nick.clone(), ava: profile.ava.clone(), role, ts: now_ms(), gone: false });
         let name = r.name.clone();
         self.st.save_rooms();
@@ -552,30 +599,31 @@ impl Node {
         Resp::Joined { room: w }
     }
 
-    fn on_msg(&mut self, peer: PeerId, msg: Msg) {
+    fn on_msg(&mut self, peer: PeerId, msg: Msg) -> Result<(), String> {
         let ps = peer.to_string();
         let room = msg.room.clone();
         if !self.st.rooms.contains_key(&room) && self.is_friend(&ps) && room == dm_room_id(&self.me, &peer) {
             self.ensure_dm(&ps);
         }
         if !self.member_ok(&room, &ps) {
-            return;
+            return Err("не участник".into());
         }
         if self.blocked_dm(&room, &msg.from) {
-            return;
+            return Ok(());
         }
         let author_ok = self.st.rooms.get(&room).map(|r| r.members.contains_key(&msg.from)).unwrap_or(false);
         if !author_ok || !verify(&msg) {
             tracing::warn!("отбросил сообщение {} от {}: подпись/автор не сходятся", msg.id, msg.from);
-            return;
+            return Err("неверная подпись или автор".into());
         }
-        if self.st.add_msg(msg.clone()) {
+        if self.st.add_msg(msg.clone())? {
             self.tell_ui(&room, std::slice::from_ref(&msg), true);
             let targets: Vec<PeerId> = self.online_members(&room).into_iter().filter(|p| *p != peer && p.to_string() != msg.from).collect();
             for t in targets {
                 self.send(t, Req::Msg { msg: msg.clone() }, Pend::Other);
             }
         }
+        Ok(())
     }
 
     fn on_sync_req(&mut self, peer: PeerId, room: String, since: u64, have: Vec<String>) -> Resp {
@@ -638,8 +686,10 @@ impl Node {
                 Resp::Ok
             }
             Req::Msg { msg } => {
-                self.on_msg(peer, msg);
-                Resp::Ok
+                match self.on_msg(peer, msg) {
+                    Ok(()) => Resp::Ok,
+                    Err(e) => { self.log("err", &e); Resp::Err { e } }
+                }
             }
             Req::SyncReq { room, since, have } => self.on_sync_req(peer, room, since, have),
             Req::Ev { room, .. } | Req::Rtc { room, .. } | Req::Voice { room, .. } if self.blocked_dm(&room, &ps) => Resp::Ok,
@@ -686,6 +736,7 @@ impl Node {
                 tracing::debug!("hello {peer}: {e}");
             }
             (Pend::Find(nick), Resp::Profile { profile }) => {
+                let profile = profile.sanitized();
                 if profile.nick == nick {
                     let fr = self.st.friends.get(&ps).map(|f| f.state.clone());
                     self.emit("found", json!({ "nick": nick, "peer": ps, "profile": profile, "friend": fr }));
@@ -700,17 +751,18 @@ impl Node {
                 }
             }
             (Pend::Whois, Resp::Profile { profile }) => {
+                let profile = profile.sanitized();
                 if !profile.nick.is_empty() && !self.known(&peer) {
                     self.nearby.insert(ps.clone(), profile.clone());
                     self.emit("nearby", json!({ "peer": ps, "profile": profile }));
                 }
             }
             (Pend::Join(room), Resp::Joined { room: w }) => {
-                if w.id != room {
+                if w.id != room || !room_wire_ok(&w) {
                     return;
                 }
                 let me = self.me_s.clone();
-                if !w.members.iter().any(|m| m.peer == me && !m.gone) {
+                if !self.st.rooms.get(&room).map(|r| pending_join_ok(r, &ps, &w, &me)).unwrap_or(false) {
                     return;
                 }
                 if let Some(r) = self.st.rooms.get_mut(&room) {
@@ -744,12 +796,16 @@ impl Node {
                 let mut new = vec![];
                 let mut max_ts = 0;
                 for mut m in msgs {
-                    max_ts = max_ts.max(m.ts);
-                    if m.room != room || !authors.contains_key(&m.from) || self.blocked_dm(&room, &m.from) || !verify(&m) {
+                    if m.room != room || !authors.contains_key(&m.from) || self.blocked_dm(&room, &m.from) || !timestamp_ok(m.ts) || !verify(&m) {
                         continue;
                     }
                     m.at = None;
-                    if self.st.add_msg(m.clone()) {
+                    let added = match self.st.add_msg(m.clone()) {
+                        Ok(added) => added,
+                        Err(e) => { self.log("err", e); return; }
+                    };
+                    max_ts = max_ts.max(m.ts);
+                    if added {
                         // в списке для UI вложение не нужно — tell_ui возьмёт лёгкую копию из хранилища
                         if let Value::Object(o) = &mut m.data {
                             o.remove("src");
@@ -767,5 +823,58 @@ impl Node {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    use crate::testutil::{member, room};
+
+    #[test]
+    fn member_cannot_demote_admin_or_revive_removed_member() {
+        let mut r = room();
+        let mut proposed = r.members["admin"].clone();
+        proposed.role = "member".into(); proposed.ts += 1;
+        assert!(!member_change_ok(&r, "user", &proposed));
+        assert!(member_change_ok(&r, "owner", &proposed));
+        r.members.get_mut("admin").unwrap().gone = true;
+        proposed.role = "admin".into(); proposed.gone = false;
+        assert!(!member_change_ok(&r, "user", &proposed));
+        assert!(member_change_ok(&r, "owner", &proposed));
+    }
+
+    #[test]
+    fn invitations_follow_policy_and_never_grant_admin() {
+        let mut r = room();
+        let proposed = member("new-user", "member");
+        assert!(!member_change_ok(&r, "user", &proposed));
+        assert!(member_change_ok(&r, "admin", &proposed));
+        r.invite = "all".into();
+        assert!(member_change_ok(&r, "user", &proposed));
+        assert!(!member_change_ok(&r, "user", &member("new-user", "admin")));
+    }
+
+    #[test]
+    fn ordinary_member_can_leave_but_cannot_kick_owner_or_admin() {
+        let r = room();
+        let mut proposed = r.members["user"].clone(); proposed.gone = true;
+        assert!(member_change_ok(&r, "user", &proposed));
+        proposed = r.members["admin"].clone(); proposed.gone = true;
+        assert!(!member_change_ok(&r, "user", &proposed));
+        proposed = r.members["owner"].clone(); proposed.gone = true;
+        assert!(!member_change_ok(&r, "admin", &proposed));
+    }
+
+    #[test]
+    fn knowing_invite_secret_does_not_allow_hijacking_a_pending_join() {
+        let mut pending = room(); pending.pending = true; pending.inviter = "admin".into();
+        let w = RoomWire { id:pending.id.clone(), kind:"group".into(), name:pending.name.clone(),
+            color:String::new(),pic:String::new(),secret:pending.secret.clone(),owner:pending.owner.clone(),
+            members:pending.members.values().cloned().collect(),created:1,invite:"admin".into(),voice:true,meta_ts:1,addrs:vec![] };
+        assert!(pending_join_ok(&pending, "admin", &w, "user"));
+        assert!(!pending_join_ok(&pending, "user", &w, "user"));
+        let mut forged = w; forged.secret = "different".into();
+        assert!(!pending_join_ok(&pending, "admin", &forged, "user"));
     }
 }

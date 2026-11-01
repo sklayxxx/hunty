@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https: hmedia:; media-src 'self' data: blob: hmedia: https://hmedia.localhost http://hmedia.localhost; connect-src 'self' data: blob: ipc: http://ipc.localhost https://ipc.localhost http://hmedia.localhost https://hmedia.localhost https://api.github.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
     }
   },
   "bundle": {

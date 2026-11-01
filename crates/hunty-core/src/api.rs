@@ -111,7 +111,7 @@ impl Node {
             return Err("ты не в этой хате".into());
         }
         let last = self.st.last_ts(room);
-        let ts = now_ms().max(last + 1);
+        let ts = now_ms().max(last.saturating_add(1));
         let m = self.sign(Msg {
             id: rand_hex(10),
             room: room.to_string(),
@@ -124,7 +124,7 @@ impl Node {
             sig: String::new(),
             at: None,
         });
-        self.st.add_msg(m.clone());
+        if !self.st.add_msg(m.clone())? { return Err("сообщение не сохранено".into()); }
         if let Some(r) = self.st.rooms.get_mut(room) {
             r.read_ts = r.read_ts.max(ts);
         }
@@ -169,8 +169,8 @@ impl Node {
             p.nick = n;
         }
         if let Some(a) = v.get("ava").and_then(|x| x.as_str()) {
-            if a.len() > 96 * 1024 {
-                return Err("аватарка слишком большая (до 96 КБ)".into());
+            if !avatar_ok(a) {
+                return Err("аватарка: моб или PNG/JPEG/WebP/GIF/AVIF до 96 КБ".into());
             }
             p.ava = a.to_string();
         }
@@ -190,7 +190,7 @@ impl Node {
             if x.len() > 200 * 1024 {
                 return Err("картинка шапки слишком большая (до 200 КБ)".into());
             }
-            if !(x.is_empty() || x.starts_with("g:") || x.starts_with("data:image/")) {
+            if !(x.is_empty() || x.strip_prefix("g:").map(|s| s.len() <= 32 && s.bytes().all(|c| c.is_ascii_lowercase())).unwrap_or(false) || image_data_ok(x, 200 * 1024)) {
                 return Err("шапка: градиент или картинка".into());
             }
             p.banner = x.to_string();
@@ -935,24 +935,14 @@ impl Node {
                 let key = self.key.to_protobuf_encoding().map_err(|e| e.to_string())?;
                 Ok(json!({
                     "hunty_backup": 1, "peer": self.me_s, "key": B64.encode(key), "profile": self.st.profile,
-                    "friends": self.st.friends, "rooms": self.st.rooms, "config": self.st.config, "ts": now_ms(),
+                    "friends": self.st.friends, "rooms": self.st.rooms, "config": self.st.config, "blocked": self.st.blocked, "ts": now_ms(),
                 }))
             }
             "backup_import" => {
                 let d = v.get("data").ok_or("нет данных")?;
-                if d.get("hunty_backup").is_none() {
-                    return Err("это не бэкап Hunty".into());
-                }
-                let key = B64.decode(d.get("key").and_then(|x| x.as_str()).ok_or("нет ключа")?).map_err(|_| "битый ключ")?;
-                libp2p::identity::Keypair::from_protobuf_encoding(&key).map_err(|_| "битый ключ")?;
-                let dir = self.st.dir.clone();
-                write_atomic(&dir.join("identity.key"), &key).map_err(|e| e.to_string())?;
-                for (f, k) in [("profile.json", "profile"), ("friends.json", "friends"), ("rooms.json", "rooms"), ("config.json", "config")] {
-                    if let Some(x) = d.get(k) {
-                        write_atomic(&dir.join(f), &serde_json::to_vec_pretty(x).unwrap_or_default()).map_err(|e| e.to_string())?;
-                    }
-                }
-                let _ = std::fs::remove_file(dir.join("peers.json"));
+                crate::backup::stage(&self.st.dir, d).map_err(|e| format!("{e:#}"))?;
+                self.restoring = true;
+                self.emit("restart_required", json!({ "why": "restore" }));
                 self.quit = true;
                 Ok(json!({ "restart": true }))
             }
@@ -971,7 +961,7 @@ fn room_pic(v: &Value) -> Result<String, String> {
     if p.is_empty() {
         return Ok(String::new());
     }
-    if !p.starts_with("data:image/") {
+    if !image_data_ok(p, 96 * 1024) {
         return Err("аватарка группы — только картинка".into());
     }
     if p.len() > 96 * 1024 {

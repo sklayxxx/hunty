@@ -11,7 +11,7 @@ import { keyLabel, keyOf } from './keyname.js';
 
 export const MAXV = 6;
 export const V = {
-  room: '', since: 0, mic: !prefs.selfMute, deaf: !!prefs.selfDeaf, cam: false, share: false,
+  room: '', session: 0, since: 0, mic: !prefs.selfMute, deaf: !!prefs.selfDeaf, cam: false, share: false,
   raw: null, micS: null, track: null, proc: null, gain: null, an: null, gate: null, chain: null, gateOpen: true, level: 0,
   camS: null, scrS: null, peers: new Map(), resets: new Map(), mini: false, manualMini: false, ptt: false, gkeys: false, gateMsg: null,
 };
@@ -26,9 +26,11 @@ const pushState = () => { if (V.room) api('voice_state', { state: myState() }).c
 
 /* ---------- микрофон ---------- */
 async function micStart() {
+  const session = V.session;
   let raw = null;
   try { raw = await getMic(); }
   catch (e) { tmsg('warn', 'микрофон недоступен — тебя не слышно, но ты всех слышишь'); V.mic = false; }
+  if (session !== V.session || !V.room) { if (raw) raw.getTracks().forEach(t => t.stop()); return; }
   V.raw = raw;
   const ctx = actx();
   let ch = null;
@@ -252,23 +254,26 @@ export async function join(room, o = {}) {
   if (n >= MAXV) { tmsg('warn', `в голосе уже ${MAXV} — больше прямых соединений mesh не потянет`); return; }
   if (V.room) await leave({ silent: true });
   V.room = room; V.since = Date.now(); V.mini = false; V.manualMini = false; V.mic = o.mic ?? !prefs.selfMute; V.deaf = !!prefs.selfDeaf;
+  const session = ++V.session;
   actx();
   await micStart();
+  if (V.session !== session || V.room !== room) return;
   try {
     const res = await api('voice_join', { room, state: myState() });
-    if (V.room !== room) return;
+    if (V.session !== session || V.room !== room) return;
     for (const p of Object.keys(res.peers || {})) if (p !== myId()) pcFor(p);
-  } catch (e) { V.room = ''; micStop(); fail(e); layout(); return; }
+  } catch (e) { if (V.session !== session) return; V.room = ''; micStop(); fail(e); layout(); return; }
   if (!o.silent) { sfx('join'); tmsg('ok', r.kind === 'dm' ? `звонок с ${nickOf(dmPeer(r))} · напрямую P2P` : `ты в голосе «${r.name}» · ${n ? 'там ' + n : 'пока один — друзья увидят, что ты тут'}`); }
   if (S.cur !== room && !mobile()) { V.mini = true; }
   layout(); vuStart(); bus.emit('vjoined', room);
 }
 export async function leave(o = {}) {
   if (!V.room) return;
+  ++V.session;
   const room = V.room, secs = (Date.now() - V.since) / 1000;
   if (ringOut && ringOut.room === room) { hangOut('left'); o = { ...o, logCall: false }; } // ушёл, пока ещё звонили — гасим звонок у друга
   if (V.share) stopShare(true);
-  if (V.cam) camStop(true);
+  camStop(true); // Also cancel a pending camera permission request.
   for (const p of [...V.peers.keys()]) closePeer(p);
   V.resets.clear(); micStop(); V.room = ''; V.mini = false; popToggle(false);
   try { await api('voice_leave'); } catch (_) {}
@@ -519,22 +524,29 @@ export const toggleShare = () => { if (!V.room) { tmsg('warn', 'экран по�
 shareB.addEventListener('click', toggleShare);
 
 /* ---------- вебка ---------- */
+let camRequest = 0;
 export async function camStart() {
   if (!V.room) { tmsg('warn', 'вебка работает в голосе — сначала зайди'); return; }
+  if (V.cam) return;
+  const session = V.session, request = ++camRequest;
+  let stream;
   const h = +prefs.camRes || 720;
   try {
     const c = { height: { ideal: h }, width: { ideal: Math.round(h * 16 / 9) }, frameRate: { ideal: 30 } };
     if (prefs.camId) c.deviceId = { ideal: prefs.camId };
-    V.camS = await navigator.mediaDevices.getUserMedia({ video: c });
-  } catch (e) { tmsg('err', 'вебка недоступна: ' + (e.message || e.name)); return; }
+    stream = await navigator.mediaDevices.getUserMedia({ video: c });
+  } catch (e) { if (request === camRequest && session === V.session) tmsg('err', 'вебка недоступна: ' + (e.message || e.name)); return; }
+  if (!V.room || session !== V.session || request !== camRequest) { stream.getTracks().forEach(t => t.stop()); return; }
+  V.camS = stream;
   V.cam = true; sendMetaAll();
   const t = V.camS.getVideoTracks()[0];
   for (const P of V.peers.values()) P.camTx = P.pc.addTrack(t, V.camS);
-  t.onended = () => camStop();
+  t.onended = () => { if (V.camS === stream) camStop(); };
   bus.emit('media', myId(), 'cam', V.camS); syncCtrl(); renderRows(); pushState();
   tmsg('ok', 'вебка включена · видят все в голосе');
 }
 export function camStop(silent) {
+  ++camRequest;
   if (!V.camS) return;
   for (const P of V.peers.values()) { if (P.camTx) { try { P.pc.removeTrack(P.camTx); } catch (_) {} P.camTx = null; } }
   V.camS.getTracks().forEach(t => t.stop()); V.camS = null; V.cam = false;
@@ -545,6 +557,7 @@ export function camStop(silent) {
 /* ---------- демка (показ экрана) ---------- */
 export async function startShare(o = {}) {
   if (!V.room) { tmsg('warn', 'экран показывают в голосе — сначала зайди'); return; }
+  const session = V.session;
   const h = +(o.res || prefs.shareRes) || 1080, fps = +(o.fps || prefs.shareFps) || 30;
   const wantAudio = o.audio ?? !!prefs.shareAudio;
   let s, hint = null;
@@ -559,7 +572,7 @@ export async function startShare(o = {}) {
     });
   } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') tmsg('err', 'демка не запустилась: ' + (e.message || e.name)); return; }
   finally { clearTimeout(hintT); if (hint) closeToast(hint); }
-  if (!V.room) { s.getTracks().forEach(t => t.stop()); return; } // пока выбирал — вышел из голоса
+  if (!V.room || session !== V.session) { s.getTracks().forEach(t => t.stop()); return; }
   if (V.share) stopShare(true);
   V.scrS = s; V.share = true; V.drawOk = o.draw ?? (prefs.shareDraw !== 'none');
   const vt0 = s.getVideoTracks()[0]; if (vt0) { vt0.contentHint = prefs.shareHint === 'motion' ? 'motion' : 'detail'; vt0.onended = () => stopShare(); }

@@ -699,12 +699,21 @@ async function send(kind, text, data, reply = takeReply(), from = null) {
 export const sendTo = (room, kind, text, data) => api('send', { room, kind, text, data }).then(m => { pushLocal(m); return m; });
 export function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 168) + 'px'; }
 /** отправить то, что в поле; data — доп. поля (эффект), empty — что слать, если поле пустое */
-export function submitText(data, empty = '') {
+export async function submitText(data, empty = '') {
   if (editing && editing.room === S.cur) { saveEdit(); return; }
   const v = input.value.trim() || empty; if (!v || !S.cur || form.hidden) return;
   const fr = input.getBoundingClientRect(), cs = getComputedStyle(input);
   const from = { r: { left: fr.left + parseFloat(cs.paddingLeft), top: fr.top + parseFloat(cs.paddingTop), width: fr.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) }, h: emojiOnly(v) ? `<span class="jumbo">${emo(esc(v))}</span>` : emo(esc(plain(v))) };
-  input.value = ''; autosize(); return send('text', v, data, takeReply(), from);
+  const room = S.cur, draft = input.value, reply = replyTo;
+  input.value = ''; autosize();
+  const result = await send('text', v, data, takeReply(), from);
+  // Keep a failed send recoverable without overwriting anything typed meanwhile.
+  if (!result && S.cur === room && !input.value) {
+    input.value = draft || v;
+    if (!replyTo && reply && reply.room === room) replyTo = reply;
+    autosize(); renderCbar();
+  }
+  return result;
 }
 form.addEventListener('submit', e => { e.preventDefault(); submitText(); });
 let tyT = 0, tySent = 0;

@@ -1,6 +1,7 @@
 // Карточка профиля как в Discord: шапка (цвет ника / градиент / своя картинка), ава с вырезом, ник, статус, «о себе».
 // Одна разметка на всё: окно профиля друга, «мой профиль», живое превью в настройках.
 import { esc } from './core.js';
+import { isImageData } from './image-data.js';
 
 /** готовые шапки: ключ → [подпись, CSS-фон] */
 export const BANNERS = {
@@ -15,7 +16,7 @@ export const BANNERS = {
   end: ['Энд', 'radial-gradient(40% 80% at 75% 35%,#f4f0b8,transparent 55%),linear-gradient(135deg,#2a1450 0%,#140b24 70%)'],
   mono: ['Графит', 'linear-gradient(135deg,#4a4a55 0%,#1c1c22 100%)'],
 };
-export const isImg = v => typeof v === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v);
+export const isImg = isImageData;
 export const isColor = c => typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c);
 /** CSS-фон шапки: своя картинка → готовый градиент → «от цвета ника» */
 export function bannerBg(banner, color) {
