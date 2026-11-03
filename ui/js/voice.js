@@ -1,12 +1,12 @@
 // Голос: WebRTC mesh (до 6), сигналинг через P2P-ядро, мик/звук/вебка/демка, звонки в личке, кнопки F1–F6
 import { $, $$, esc, ic, dur, pick, clamp, mobile, reduce, prefs, setPref, bus, sleep, short } from './core.js';
 import { api } from './api.js';
-import { S, myId, myNick, nickOf, avaOf, colorOf, roomName, dmPeer, voiceIn, voiceCount, isOnline } from './state.js';
+import { S, myId, myNick, nickOf, avaOf, colorOf, roomName, dmPeer, voiceIn, voiceCount, isOnline, isBlocked } from './state.js';
 import { app, tmsg, sfx, toast, closeToast, fail, notify, speak, actx, openW, closeW, fit, glitch, OPEN, segSet, segGet } from './ui.js';
 import { getMic, micChain } from './audio.js';
 import { onCtx, openMenu } from './menu.js';
 import { personItems, mutedFor, volOf } from './people.js';
-import { tileHTML } from './chat.js';
+import { tileHTML, openChat } from './chat.js';
 import { keyLabel, keyOf } from './keyname.js';
 
 export const MAXV = 6;
@@ -624,6 +624,7 @@ bus.on('voice', (room, peer, st, had) => {
   }
   syncJoin();
 });
+bus.on('room', r => { if (r && r.id === S.cur) syncJoin(); }); // админ выключил/включил голос — «Зайти» сразу прячется/появляется
 bus.on('presence', (peer, on) => { if (!on && V.peers.has(peer)) { closePeer(peer); renderRows(); } });
 bus.on('open', id => {
   syncJoin();
@@ -644,6 +645,8 @@ bus.on('room_removed', room => { if (room === V.room) leave({ silent: true }); }
 export async function call(room) {
   const r = S.rooms.get(room); if (!r || r.kind !== 'dm') return;
   const p = dmPeer(r);
+  // заблокированному звонок всё равно не дойдёт (ядро молча режет) — не держу человека 30 сек на «звоним…»
+  if (isBlocked(p)) { tmsg('warn', `${nickOf(p)} в блоке — разблокируй, чтобы позвонить`); return; }
   if (voiceIn(room)[p]) { join(room); return; } // друг уже ждёт в звонке
   await join(room, { silent: true });
   if (V.room !== room) return;
@@ -711,7 +714,7 @@ bus.on('ev:ring', v => {
   if (V.room === v.room) return;
   const p = v.from; let n = 0;
   const t = toast({ ava: avaOf(p), icon: 'phone', title: `${nickOf(p)} звонит`, sub: 'личка · напрямую P2P', tag: '30 сек', cd: 30, cls: 'ring',
-    actions: [{ label: 'Ответить', cls: 'cbtn', fn: () => { stopRing(v.room); join(v.room); } }, { label: 'Сбросить', cls: 'gbtn', fn: () => { stopRing(v.room); declined.set(v.room, Date.now()); api('ev', { room: v.room, kind: 'ring_stop', data: { why: 'declined' } }).catch(() => {}); } }],
+    actions: [{ label: 'Ответить', cls: 'cbtn', fn: () => { stopRing(v.room); openChat(v.room); join(v.room); } }, { label: 'Сбросить', cls: 'gbtn', fn: () => { stopRing(v.room); declined.set(v.room, Date.now()); api('ev', { room: v.room, kind: 'ring_stop', data: { why: 'declined' } }).catch(() => {}); } }],
     onTimeout: () => stopRing(v.room) });
   const iv = setInterval(() => { if (++n > 12) { stopRing(v.room); return; } sfx('ring'); }, 2500);
   ringIn.set(v.room, { t, iv });
@@ -781,13 +784,14 @@ function voiceItems(p) {
     { icon: V.share ? 'monitor-off' : 'monitor-up', label: V.share ? 'Остановить показ' : 'Показать экран', kbd: 'Ctrl+Shift+S', fn: () => V.share ? stopShare() : openW('share') },
     '-'] });
   const st = voiceIn(V.room)[p] || {};
-  return personItems(p, { extra: V.room && voiceIn(V.room)[p] ? [
+  return personItems(p, { voice: !!(V.room && voiceIn(V.room)[p]), extra: V.room && voiceIn(V.room)[p] ? [
     (S.friends.get(p) || {}).state === 'friend' ? null : { icon: 'hand', label: 'Пнуть', fn: () => nudge(p) },
     !st.cam ? { icon: 'video', label: 'Попросить вебку', fn: () => bus.emit('ask', p, 'cam') } : null,
     !st.share ? { icon: 'monitor-up', label: 'Попросить показать экран', fn: () => bus.emit('ask', p, 'share') } : null,
   ] : [] });
 }
-onCtx('.vr[data-u]', el => voiceItems(el.dataset.u));
+onCtx('.vr[data-u], .vtile[data-u]', el => voiceItems(el.dataset.u));
+onCtx('.vtile.wait[data-wait]', el => personItems(el.dataset.wait));
 onCtx('.js-mav img[data-u]', el => voiceItems(el.dataset.u));
 let nudgeT = 0;
 export async function nudge(peer, room) {

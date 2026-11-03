@@ -1,7 +1,7 @@
 // Группы: создать, настройки, инвайт с QR, вступить по ссылке
 import { $, $$, esc, ic, short, plural, bus } from './core.js';
 import { api } from './api.js';
-import { S, myId, myNick, nickOf, avaOf, isOnline, roomName } from './state.js';
+import { S, myId, myNick, nickOf, avaOf, isOnline, roomName, pushLocal } from './state.js';
 import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, segSet, segGet, winOpen } from './ui.js';
 import { openChat, renderLists, header, tileHTML, leaveGroup, pdHTML, lineOf } from './chat.js';
 import { shrinkImage } from './card.js';
@@ -159,7 +159,7 @@ $('.js-gsleave', sw).addEventListener('click', () => leaveGroup(gsRoom));
 bus.on('room_removed', room => { if (winOpen() === 'gset' && room === gsRoom) closeW(true); });
 async function kick(peer) {
   if (!(await ask({ title: `Выгнать ${nickOf(peer)} из группы?`, text: 'Инвайт-ссылка сбросится, чтобы он не вернулся по старой.', ok: 'Выгнать', danger: true, icon: 'ban' }))) return;
-  try { await api('send', { room: gsRoom, kind: 'sys', text: 'kick:' + peer }).catch(() => {}); const j = await api('room_kick', { room: gsRoom, peer }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', `${nickOf(peer)} выгнан · старый инвайт больше не работает`); } catch (err) { fail(err); }
+  try { await api('send', { room: gsRoom, kind: 'sys', text: 'kick:' + peer }).then(pushLocal).catch(() => {}); const j = await api('room_kick', { room: gsRoom, peer }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', `${nickOf(peer)} выгнан · старый инвайт больше не работает`); } catch (err) { fail(err); }
 }
 async function setAdmin(peer, on) { try { const j = await api('room_admin', { room: gsRoom, peer, on }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', on ? `${nickOf(peer)} теперь админ` : `${nickOf(peer)} больше не админ`); } catch (err) { fail(err); } }
 // правый клик по участнику: меню человека + админка

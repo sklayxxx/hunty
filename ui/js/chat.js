@@ -162,7 +162,7 @@ export function header() {
     cmeta.classList.toggle('ty', ty > 0);
     cmeta.textContent = ty ? 'печатает…' : shownOnline(p) ? lineOf(p) : 'не в сети · сообщения дойдут, когда появится';
     const inCall = S.myVoice && S.myVoice[0] === r.id;
-    hbtns.innerHTML = inCall ? `<button class="ib hang" data-act="hang" title="Положить трубку" aria-label="Положить трубку">${ic('phone-off')}</button>` : `<button class="ib" data-act="call" title="Позвонить" aria-label="Позвонить">${ic('phone')}</button>`;
+    hbtns.innerHTML = isBlocked(p) && !inCall ? '' : inCall ? `<button class="ib hang" data-act="hang" title="Положить трубку" aria-label="Положить трубку">${ic('phone-off')}</button>` : `<button class="ib" data-act="call" title="Позвонить" aria-label="Позвонить">${ic('phone')}</button>`;
     hbtns.innerHTML += MEDIAB() + `<button class="ib" data-act="find" title="Поиск по переписке (Ctrl+F)" aria-label="Поиск по переписке">${ic('search')}</button><button class="ib" data-prof="${esc(p)}" title="Профиль" aria-label="Профиль">${ic('user-round')}</button>`;
     input.placeholder = 'Написать @' + nickOf(p);
   } else if (r.kind === 'self') {
@@ -665,7 +665,7 @@ cbar.addEventListener('click', e => {
   if (b.dataset.cb === 'x') { cancelEdit(); cancelReply(); input.focus(); }
   if (b.dataset.cb === 'unblock') bus.emit('unblock', dmPeer(S.rooms.get(S.cur)));
 });
-bus.on('blocked', () => { renderLists(); if (S.cur) { syncComposer(); const l = logs.get(S.cur); renderLog(S.cur, l && !atBottom(l) ? 'top' : ''); } });
+bus.on('blocked', () => { renderLists(); if (S.cur) { header(); const l = logs.get(S.cur); renderLog(S.cur, l && !atBottom(l) ? 'top' : ''); } });
 
 /* ---------- открыть чат ---------- */
 let readT = 0;
@@ -738,6 +738,7 @@ function sendTyping(on = true) {
   tySent = on ? Date.now() : 0;
   api('ev', { room: S.cur, kind: 'typing', data: { on } }).catch(() => {});
 }
+bus.on('pref', k => { if (k === 'msgSize' || k === 'font') autosize(); });
 input.addEventListener('input', () => { autosize(); if (editing) return; if (input.value.trim()) { sendTyping(true); clearTimeout(tyT); tyT = setTimeout(() => sendTyping(false), 5000); } });
 function wrapSel(a, b = a) {
   const s = input.selectionStart, e = input.selectionEnd, sel = input.value.slice(s, e);

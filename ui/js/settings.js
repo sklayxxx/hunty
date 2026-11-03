@@ -564,7 +564,7 @@ $('.js-netbtn').addEventListener('click', async () => {
 });
 
 /* ---------- о программе и обновления ---------- */
-function about() { $('.js-ver').textContent = `v${S.version || '0.5.0'} · бесплатно навсегда`; }
+function about() { $('.js-ver').textContent = `v${S.version || '0.6.0'} · бесплатно навсегда`; }
 const cmpV = (a, b) => { const p = s => String(s).replace(/^v/, '').split(/[.-]/).map(x => +x || 0); const x = p(a), y = p(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
 export async function checkUpdate(silent) {
   const st = $('.js-updst');

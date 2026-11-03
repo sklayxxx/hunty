@@ -77,6 +77,8 @@ pub(crate) struct Online {
     pub lvl: u8,
     /// держит ПК сервером для друзей
     pub server: bool,
+    /// до него можно достучаться напрямую (белый IP / UPnP) — или он сервер
+    pub hub: bool,
 }
 
 /// Что пир рассказал о себе в Hello (кроме профиля и хат).
@@ -85,6 +87,7 @@ pub(crate) struct Caps {
     pub relay: bool,
     pub lvl: u8,
     pub server: bool,
+    pub hub: bool,
 }
 
 pub(crate) enum Pend {
@@ -128,6 +131,8 @@ pub(crate) struct RelayUse {
     pub ok: bool,
     pub logged: bool,
     pub at: Instant,
+    /// адрес ретранслятора (без /p2p-circuit) — чтобы запомнить удачный
+    pub addr: Multiaddr,
 }
 
 pub struct Node {
@@ -190,6 +195,11 @@ pub struct Node {
     pub(crate) intros: (u32, u32),
     /// режим «сервер для друзей» (из конфига при старте)
     pub(crate) server: bool,
+    /// какую «прямую достижимость» (хаб) я уже рассказал друзьям в Hello
+    pub(crate) hub_told: bool,
+    /// отказал в заявке / удалил из друзей → с какого момента (его часы для заявки, мои — для удаления) не верю его «хочу дружить»:
+    /// повтор старой заявки или авто-переспрос после удаления получает «нет», а не всплывает заявкой снова
+    pub(crate) declined: HashMap<String, u64>,
 }
 
 fn load_key(dir: &std::path::Path) -> Result<Keypair> {
@@ -422,6 +432,8 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
         routing_n: 0,
         intros: (0, 0),
         server,
+        hub_told: false,
+        declined: HashMap::new(),
     };
     node.refresh_allow();
     tracing::info!("hunty {VERSION}: я {}", node.me);
@@ -576,17 +588,22 @@ impl Node {
     pub(crate) fn dht_ready(&self) -> bool {
         self.swarm.behaviour().kad.is_enabled() && (self.bootstrapped || self.routing_n >= 16)
     }
-    /// Пора ли снова звонить: первые попытки часто, потом реже; сервер друга — всегда часто.
+    /// Пора ли снова звонить: первые попытки часто, потом реже.
+    /// Хаб (друг с белым IP / UPnP или сервер) — каждые 5 секунд первые полчаса, потом раз в 15:
+    /// звонок на живой адрес дешёвый, а друг появится в сети через секунды после запуска.
     pub(crate) fn dial_due(&self, p: &PeerId, now: Instant) -> bool {
         let Some(t) = self.dialing.get(p) else { return true };
         let n = self.dial_n.get(p).copied().unwrap_or(0);
-        let server = self.st.peers.get(&p.to_string()).map(|c| c.server).unwrap_or(false);
+        let hub = self.st.peers.get(&p.to_string()).map(|c| c.server || c.hub).unwrap_or(false);
+        let friend = self.is_friend(&p.to_string());
         let secs = match n {
             0..=3 => 3,
+            _ if hub && n < 360 => 5,
+            _ if hub => 15,
             4..=6 => 6,
             7..=9 => 12,
-            _ if server => 12,
             10..=15 => 20,
+            _ if friend => 20,
             _ => 30,
         };
         now.duration_since(*t) >= Duration::from_secs(secs)
@@ -962,11 +979,24 @@ impl Node {
                 }
             }
             BehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted { relay_peer_id, renewal, .. }) => {
+                let mut keep = None;
                 if let Some(u) = self.relays.get_mut(&relay_peer_id) {
                     u.ok = true;
+                    keep = Some(u.addr.clone());
                 }
                 if !renewal {
                     tracing::info!("резерв на ретрансляторе {relay_peer_id}");
+                    // публичный ретранслятор — запомню: в следующий раз резервируюсь у него первым
+                    if let Some(a) = keep.filter(|_| !self.known(&relay_peer_id)) {
+                        let full = a.with(Protocol::P2p(relay_peer_id)).to_string();
+                        if self.st.relays.first() != Some(&full) {
+                            let ps = relay_peer_id.to_string();
+                            self.st.relays.retain(|x| !x.ends_with(&ps));
+                            self.st.relays.insert(0, full);
+                            self.st.relays.truncate(3);
+                            self.st.save_relays();
+                        }
+                    }
                 }
                 self.addr_dirty = Some(Instant::now());
             }
@@ -1236,6 +1266,15 @@ impl Node {
         }
         // 5. ретрансляторы
         self.manage_relays();
+        // 5б. стал (или перестал быть) достижим напрямую — расскажу друзьям, они будут стучаться ко мне первым
+        if self.reachable() != self.hub_told {
+            self.hub_told = self.reachable();
+            let ps: Vec<PeerId> = self.online.iter().filter(|(_, o)| o.lvl >= LEVEL).map(|(p, _)| *p).collect();
+            for p in ps {
+                self.hello_inflight.remove(&p);
+                self.send_hello(p);
+            }
+        }
         // 6. диск
         if self.peers_dirty {
             self.peers_dirty = false;
@@ -1276,6 +1315,12 @@ impl Node {
             if let Some(r) = self.relays.remove(&p) {
                 self.swarm.remove_listener(r.listener);
                 self.relay_bad.insert(p);
+                let ps = p.to_string();
+                let n = self.st.relays.len();
+                self.st.relays.retain(|a| !a.ends_with(&ps));
+                if self.st.relays.len() != n {
+                    self.st.save_relays();
+                }
             }
         }
         if self.started.elapsed() > Duration::from_secs(1800) && self.relay_bad.len() > 32 {
@@ -1304,18 +1349,30 @@ impl Node {
             cands.sort_by_key(|c| c.0);
             cands.truncate(2 - mine);
         }
-        if public < 1 && self.started.elapsed() > Duration::from_secs(6) {
-            if let Some((p, a)) = self.relay_cands.iter().filter(|(p, _)| !self.relays.contains_key(p) && !self.relay_bad.contains(p)).find_map(|(p, addrs)| {
-                addrs.iter().find(|a| a.iter().any(|x| matches!(x, Protocol::Tcp(_)))).map(|a| (*p, strip_peer(a.clone(), p)))
-            }) {
+        // публичный: «живой» — уже подтвердил резерв или ждём его меньше 12 с (иначе параллельно пробую следующий)
+        let public_live = self.relays.iter().filter(|(p, r)| !self.known(p) && (r.ok || r.at.elapsed() < Duration::from_secs(12))).count();
+        let _ = public;
+        if public_live < 1 {
+            // сначала тот, где резервировался в прошлый раз (адрес через него у друзей в кеше), — сразу, без DHT
+            let sticky = self.st.relays.iter().filter_map(|a| a.parse::<Multiaddr>().ok()).find_map(|a| {
+                let p = relay_of(&a.clone().with(Protocol::P2pCircuit))?;
+                (!self.relays.contains_key(&p) && !self.relay_bad.contains(&p) && !self.known(&p)).then(|| (p, strip_peer(a, &p)))
+            });
+            if let Some((p, a)) = sticky {
                 cands.push((2, p, a));
+            } else if self.started.elapsed() > Duration::from_secs(6) {
+                if let Some((p, a)) = self.relay_cands.iter().filter(|(p, _)| !self.relays.contains_key(p) && !self.relay_bad.contains(p)).find_map(|(p, addrs)| {
+                    addrs.iter().find(|a| a.iter().any(|x| matches!(x, Protocol::Tcp(_)))).map(|a| (*p, strip_peer(a.clone(), p)))
+                }) {
+                    cands.push((2, p, a));
+                }
             }
         }
         for (_, p, a) in cands {
-            let addr = a.with(Protocol::P2p(p)).with(Protocol::P2pCircuit);
+            let addr = a.clone().with(Protocol::P2p(p)).with(Protocol::P2pCircuit);
             match self.swarm.listen_on(addr) {
                 Ok(id) => {
-                    self.relays.insert(p, RelayUse { listener: id, ok: false, logged: false, at: Instant::now() });
+                    self.relays.insert(p, RelayUse { listener: id, ok: false, logged: false, at: Instant::now(), addr: a });
                 }
                 Err(e) => {
                     tracing::debug!("relay {p}: {e}");
@@ -1323,6 +1380,19 @@ impl Node {
                 }
             }
         }
+    }
+
+    /// Я ему отказал / удалил его: его «хочу дружить» старше отказа — повтор (или авто-переспрос) → снова говорю «нет»
+    /// и считаю hello обычным. Заявка, отправленная уже после отказа (want новее), — настоящая: забываю отказ.
+    pub(crate) fn said_no(&mut self, peer: PeerId, want: u64) -> bool {
+        let ps = peer.to_string();
+        let Some(&cut) = self.declined.get(&ps) else { return false };
+        if self.st.friends.contains_key(&ps) || want > cut {
+            self.declined.remove(&ps);
+            return false;
+        }
+        self.send(peer, Req::FriendRemove, Pend::Other);
+        true
     }
 
     pub(crate) fn net_json(&self) -> Value {

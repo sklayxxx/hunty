@@ -501,3 +501,25 @@ time,.ct,.ub,.vc,.tbadge,.tping,.gcnt,.fcount,.js-jcount,.js-hlcount,.js-bcount{
 .srvbox>b .ic{flex:none;width:16px;height:16px;color:var(--hc)}
 .srvbox small{color:var(--dim);font-size:12.5px;line-height:1.45}
 .srvbox small b{color:var(--ink);font-weight:600}
+
+/* ---------- v0.6: «Размер текста в чате» — всё сообщение и поле ввода, не только сам текст ---------- */
+.log .m .mh{line-height:calc(var(--mfs,15px)*1.47)}
+.log .m .who{font-size:var(--mfs,15px);line-height:calc(var(--mfs,15px)*1.47)}
+.log .m .mh time{font-size:calc(var(--mfs,15px)*.77);line-height:inherit}
+.log .m .ct{font-size:calc(var(--mfs,15px)*.7)}
+.log .m.sys .tx{font-size:calc(var(--mfs,15px)*.87)}
+.log .tx .rq{font-size:calc(var(--mfs,15px)*.83)}
+.field textarea{font-size:var(--mfs,15px);line-height:calc(var(--mfs,15px)*1.47)}
+/* живой пример под ползунком: окно настроек закрывает чат, а разницу видно сразу */
+.fsprev{display:grid;gap:6px;margin:2px 0 4px;padding:12px 14px;border-radius:12px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.07)}
+.fsprev .fsm{display:grid;grid-template-columns:32px 1fr;column-gap:10px;align-items:start}
+.fsprev .fsa{width:32px;height:32px;border-radius:10px;background:var(--tc,#7ee2b8);grid-row:span 2}
+.fsprev .fsh{display:flex;align-items:baseline;gap:8px;line-height:calc(var(--mfs,15px)*1.47)}
+.fsprev .fsh b{font-size:var(--mfs,15px);font-weight:600;color:var(--tc,#7ee2b8)}
+.fsprev .fsh span{font-size:calc(var(--mfs,15px)*.77);color:var(--faint);font-variant-numeric:tabular-nums}
+.fsprev .fst{font-size:var(--mfs,15px);line-height:1.47;color:#e9e9ef}
+/* звуки по категориям: подпись · «послушать» · тумблер — в одну строку (раньше тумблер съезжал вниз) */
+.sfxl .row,.sfxl .row:has(> .tg:last-child){grid-template-columns:minmax(0,1fr) auto auto;gap:6px 10px}
+.sfxl .row .js-sfxtry{margin:0}
+/* мастер стикеров на невысоком окне: поле «Подпись» не прячется под подвал */
+@media (max-height:960px){.skm-r{gap:8px}.skm-r .skm-pv{width:min(100%,calc(100vh - 660px));min-width:150px;margin:0 auto}}

@@ -100,7 +100,7 @@ function full() {
 }
 function setTool(t) {
   E.tool = t; $$('button', tools).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
-  hint.textContent = HINT[t] || ''; $('.js-sksize', W).hidden = !(t === 'erase' || t === 'restore');
+  hint.textContent = E.img ? HINT[t] || '' : 'Выбери фото — фон уберу сам, а дальше можно подправить: обвести, стереть, вернуть.'; $('.js-sksize', W).hidden = !E.img || !(t === 'erase' || t === 'restore');
   stage.dataset.tool = t;
   if (!E.img) return;
   if (t === 'auto') { pushUndo(); cut('auto'); }

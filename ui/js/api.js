@@ -101,9 +101,10 @@ export async function restart() {
 }
 /** выключить узел (браузерный режим: в приложении это делает закрытие окна/трея) */
 export async function quitNode() { try { await api('quit'); } catch (_) {} }
-export async function attention() {
+/** мигнуть в панели задач; kind 'ring' — звонят: окно, спрятанное в трей, покажется */
+export async function attention(kind = '') {
   if (!inTauri) return;
-  try { await T.core.invoke('hunty_attention'); } catch (_) {}
+  try { await T.core.invoke('hunty_attention', { kind }); } catch (_) {}
 }
 export async function focused() {
   if (!inTauri) return document.hasFocus();

@@ -108,7 +108,7 @@ impl Node {
 
     pub(crate) fn post(&mut self, room: &str, kind: &str, text: &str, data: Value, reply: &str) -> Result<Msg, String> {
         if !self.member_ok(room, &self.me_s.clone()) {
-            return Err("ты не в этой хате".into());
+            return Err("ты не в этом чате".into());
         }
         let last = self.st.last_ts(room);
         let ts = now_ms().max(last + 1);
@@ -272,9 +272,17 @@ impl Node {
                     since: now_ms(),
                     dm: String::new(),
                     hint: vec![],
+                    want: 0,
                 });
                 e.hint = fc.a.clone();
+                e.since = now_ms(); // нажал «добавить» ещё раз — это новая заявка (свежее прошлого отказа)
                 self.st.save_friends();
+                // сам зовёшь в друзья того, кого блокнул, — значит, блок больше не нужен
+                if self.st.blocked.remove(&fc.p).is_some() {
+                    self.st.save_blocked();
+                    let bl = self.blocked_json();
+                    self.emit("blocked", json!({ "blocked": bl }));
+                }
                 let addrs: Vec<Multiaddr> = fc.a.iter().filter_map(|a| a.parse().ok()).collect();
                 if self.connected(&pid) {
                     self.hello_inflight.remove(&pid);
@@ -311,16 +319,17 @@ impl Node {
             }
             "friend_decline" | "friend_remove" => {
                 let p = s(&v, "peer");
-                if self.st.friends.remove(&p).is_none() {
+                let Some(old) = self.st.friends.remove(&p) else {
                     return Err("нет такого друга".into());
-                }
+                };
+                // отказ — по времени его заявки (его же часы, без расхождений), удаление — с этой минуты
+                self.declined.insert(p.clone(), if c == "friend_decline" && old.want > 0 { old.want } else { now_ms() });
                 self.st.save_friends();
                 self.refresh_allow();
-                if c == "friend_remove" {
-                    if let Ok(pid) = p.parse::<PeerId>() {
-                        if self.connected(&pid) {
-                            self.send(pid, Req::FriendRemove, Pend::Other);
-                        }
+                // и при удалении, и при отказе говорю ему — иначе его «хочу в друзья» в следующем hello вернёт заявку обратно
+                if let Ok(pid) = p.parse::<PeerId>() {
+                    if self.connected(&pid) {
+                        self.send(pid, Req::FriendRemove, Pend::Other);
                     }
                 }
                 self.emit("friend_removed", json!({ "peer": p }));
@@ -396,7 +405,7 @@ impl Node {
             "room_create" => {
                 let name: String = s(&v, "name").trim().chars().take(32).collect();
                 if name.is_empty() {
-                    return Err("назови хату".into());
+                    return Err("назови группу".into());
                 }
                 let id = format!("g-{}", rand_hex(8));
                 let now = now_ms();
@@ -458,7 +467,7 @@ impl Node {
                     .iter()
                     .filter_map(|p| self.st.friends.get(p).filter(|f| f.state == FriendState::Friend).map(|f| (p.clone(), f.profile.clone())))
                     .collect();
-                let r = self.st.rooms.get_mut(&id).ok_or("нет такой хаты")?;
+                let r = self.st.rooms.get_mut(&id).ok_or("нет такой группы")?;
                 if r.kind != "group" || r.pending {
                     return Err("добавлять можно только в группу".into());
                 }
@@ -487,7 +496,7 @@ impl Node {
             }
             "room_invite" => {
                 let id = s(&v, "room");
-                let r = self.st.rooms.get(&id).ok_or("нет такой хаты")?;
+                let r = self.st.rooms.get(&id).ok_or("нет такой группы")?;
                 if r.kind != "group" || r.pending {
                     return Err("инвайт бывает только у группы".into());
                 }
@@ -544,7 +553,7 @@ impl Node {
             }
             "room_leave" => {
                 let id = s(&v, "room");
-                let r = self.st.rooms.get_mut(&id).ok_or("нет такой хаты")?;
+                let r = self.st.rooms.get_mut(&id).ok_or("нет такой группы")?;
                 let kind = r.kind.clone();
                 if kind == "group" && !r.pending {
                     let me = self.me_s.clone();
@@ -566,7 +575,7 @@ impl Node {
             "room_update" => {
                 let id = s(&v, "room");
                 let me = self.me_s.clone();
-                let r = self.st.rooms.get_mut(&id).ok_or("нет такой хаты")?;
+                let r = self.st.rooms.get_mut(&id).ok_or("нет такой группы")?;
                 if r.kind != "group" {
                     // локальные флажки лички
                     if let Some(m) = b(&v, "muted") {
@@ -581,7 +590,7 @@ impl Node {
                 let meta = v.get("name").is_some() || v.get("color").is_some() || v.get("pic").is_some() || v.get("invite").is_some() || v.get("voice").is_some();
                 if meta {
                     if !r.is_admin(&me) {
-                        return Err("менять хату может только админ".into());
+                        return Err("менять группу может только админ".into());
                     }
                     if let Some(n) = v.get("name").and_then(|x| x.as_str()) {
                         let n: String = n.trim().chars().take(32).collect();
@@ -619,12 +628,12 @@ impl Node {
                 let id = s(&v, "room");
                 let p = s(&v, "peer");
                 let me = self.me_s.clone();
-                let r = self.st.rooms.get_mut(&id).ok_or("нет такой хаты")?;
+                let r = self.st.rooms.get_mut(&id).ok_or("нет такой группы")?;
                 if !r.is_admin(&me) {
                     return Err("это может только админ".into());
                 }
                 if p == r.owner {
-                    return Err("создателя хаты не трогаем".into());
+                    return Err("создателя группы не трогаем".into());
                 }
                 let m = r.members.get_mut(&p).ok_or("нет такого участника")?;
                 m.ts = now_ms();
@@ -743,7 +752,7 @@ impl Node {
             "room_clear" => {
                 let id = s(&v, "room");
                 if !self.st.rooms.contains_key(&id) {
-                    return Err("нет такой хаты".into());
+                    return Err("нет такой группы".into());
                 }
                 let freed = self.st.clear(&id, now_ms());
                 let j = self.room_json(&id);
@@ -838,7 +847,7 @@ impl Node {
                 let kind = s(&v, "kind");
                 let data = v.get("data").cloned().unwrap_or(Value::Null);
                 if !self.member_ok(&id, &self.me_s.clone()) {
-                    return Err("ты не в этой хате".into());
+                    return Err("ты не в этом чате".into());
                 }
                 let to = s(&v, "to");
                 let req = Req::Ev { room: id.clone(), kind, data };
@@ -866,7 +875,7 @@ impl Node {
             "voice_join" | "voice_state" => {
                 let id = if c == "voice_join" { s(&v, "room") } else { self.voice.as_ref().map(|x| x.0.clone()).ok_or("ты не в голосе")? };
                 if !self.member_ok(&id, &self.me_s.clone()) {
-                    return Err("ты не в этой хате".into());
+                    return Err("ты не в этом чате".into());
                 }
                 if self.st.rooms.get(&id).map(|r| r.kind == "self").unwrap_or(false) {
                     return Err("в «Избранном» звонить некому".into());

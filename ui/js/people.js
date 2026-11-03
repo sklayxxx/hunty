@@ -18,7 +18,7 @@ export function setMute(p, on) {
 const voiceOf = p => Object.keys(S.voices).find(k => voiceIn(k)[p]);
 
 /** пункты меню; extra — свои пункты после основных (голос, админка группы) */
-export function personItems(p, { extra = [], sub = '' } = {}) {
+export function personItems(p, { extra = [], sub = '', voice = false } = {}) {
   if (!p) return null;
   const copyNick = { icon: 'at-sign', label: 'Копировать ник', fn: () => copyText('@' + nickOf(p)).then(() => tmsg('ok', 'ник скопирован')) };
   const copyId = { icon: 'copy', label: 'Копировать ID', fn: () => copyText(p).then(() => tmsg('ok', 'ID скопирован')) };
@@ -32,8 +32,12 @@ export function personItems(p, { extra = [], sub = '' } = {}) {
   ];
   const f = S.friends.get(p), st = f && f.state, fr = st === 'friend', bl = isBlocked(p), on = isOnline(p), vr = voiceOf(p);
   const sl = { away: 'отошёл', dnd: 'не беспокоить' }[statusOf(p)];
+  // в звонке (как в Discord) громкость — сразу под ником
+  const vol = [{ range: { min: 0, max: 200, step: 5, value: volOf(p), on: v => setVol(p, v) }, label: 'Громкость', icon: 'volume-2' },
+    { label: 'Заглушить', check: mutedFor(p), fn: () => setMute(p, !mutedFor(p)) }];
   return [
     { head: nickOf(p), sub: sub || (bl ? 'заблокирован' : vr ? 'в голосе · ' + roomName(vr) : shownOnline(p) ? sl || 'в сети' : 'не в сети'), img: avaOf(p) },
+    ...(voice ? [...vol, '-'] : []),
     { icon: 'user-round', label: 'Профиль', fn: () => bus.emit('open-profile', p) },
     fr ? { icon: 'message-circle', label: 'Написать', disabled: bl, fn: () => bus.emit('dm', p) } : null,
     fr ? { icon: 'phone', label: 'Позвонить', disabled: bl, fn: () => bus.emit('dm-call', p) } : null,
@@ -41,9 +45,7 @@ export function personItems(p, { extra = [], sub = '' } = {}) {
     !fr && !bl && st !== 'outgoing' ? { icon: 'user-round-plus', label: st === 'incoming' ? 'Принять заявку' : 'Добавить в друзья', fn: () => bus.emit(st === 'incoming' ? 'friend-accept' : 'friend-add', p) } : null,
     st === 'outgoing' ? { icon: 'x', label: 'Отменить заявку', fn: () => bus.emit('friend-cancel', p) } : null,
     ...(extra.length ? ['-', ...extra] : []),
-    '-',
-    { range: { min: 0, max: 200, step: 5, value: volOf(p), on: v => setVol(p, v) }, label: 'Громкость', icon: 'volume-2' },
-    { label: 'Заглушить', check: mutedFor(p), fn: () => setMute(p, !mutedFor(p)) },
+    ...(voice ? [] : ['-', ...vol]),
     '-', copyNick, copyId, '-',
     fr ? { icon: 'user-x', label: 'Удалить из друзей', danger: true, fn: () => bus.emit('unfriend', p) } : null,
     { icon: bl ? 'shield-off' : 'ban', label: bl ? 'Разблокировать' : 'Заблокировать', danger: !bl, fn: () => bus.emit(bl ? 'unblock' : 'block', p) },

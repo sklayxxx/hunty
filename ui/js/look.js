@@ -16,9 +16,90 @@ export const WALLS = [
   { id: 'end', name: 'Энд', css: 'radial-gradient(50% 45% at 70% 30%,#7a3bbf 0%,transparent 72%),radial-gradient(55% 50% at 20% 80%,#25126b 0%,transparent 72%),radial-gradient(35% 30% at 90% 90%,#c9b3ff 0%,transparent 70%),#050208' },
 ];
 export function applyFont() {
-  R.dataset.font = prefs.font || 'soft';
-  R.style.setProperty('--mfs', clamp(+prefs.msgSize || 15, 12, 20) + 'px');
+  const f = prefs.font || 'soft', mfs = clamp(+prefs.msgSize || 15, 12, 20);
+  R.dataset.font = f;
+  R.style.setProperty('--mfs', (f === 'pixel' ? pixMfs(mfs) : mfs) + 'px');
+  pixSheet(f === 'pixel');
+  const note = document.querySelector('.js-fsnote');
+  if (note) {
+    let tx = 'сообщения, ники и поле ввода';
+    if (f === 'pixel') { // какие позиции ползунка дают какой чёткий размер
+      const z = appZoom(), st = []; for (let v = 13; v <= 19; v++) { const k = pixK(v, z, .2); if (!st.length || st[st.length - 1].k !== k) st.push({ k, a: v, b: v }); else st[st.length - 1].b = v; }
+      tx = st.length > 1 ? 'пиксели чёткие ступенями: ' + st.map(x => (x.a === x.b ? x.a : x.a + '–' + x.b) + ' px ×' + x.k).join(' · ') : 'на этом экране пиксели чёткие в одном размере';
+    }
+    note.textContent = tx;
+  }
 }
+
+/* ---------- «Пиксели» без мыла ----------
+   Press Start 2P нарисован на сетке 8×8: чёткий, только когда пиксель шрифта = целому числу пикселей экрана
+   (em 8, 16, 24… физических пикселей). Поэтому в этом режиме каждый размер текста из CSS округляем до ближайшего
+   чёткого с учётом масштаба Windows (devicePixelRatio) и зума окна; разрядку и «жирный» отключаем — они мылят. */
+const PIXK = .55; // size-adjust у hu-pixel в fonts.css
+const appZoom = () => +((document.querySelector('.js-app') || {}).style || {}).zoom || 1;
+const pixK = (px, z, bias = 0) => { const d = devicePixelRatio || 1; return Math.max(1, Math.round(px * PIXK * d * z / 8 + bias)); };
+const pixPx = (k, z) => +(k * 8 / ((devicePixelRatio || 1) * z * PIXK)).toFixed(4);
+// размер сообщений: ползунок переключает чёткие ступени (×1, ×2) — 19 px уже крупный пиксель
+function pixMfs(mfs) { const z = appZoom(); return pixPx(pixK(mfs, z, .2), z); }
+function splitSel(t) { // запятые верхнего уровня (не внутри :is(…)/:not(…))
+  const out = []; let d = 0, cur = '';
+  for (const ch of t) { if (ch === '(') d++; else if (ch === ')') d--; if (ch === ',' && !d) { out.push(cur.trim()); cur = ''; } else cur += ch; }
+  if (cur.trim()) out.push(cur.trim()); return out;
+}
+// размер из правила: font-size или из шорткода font (там бывает var() — тогда CSSOM не раскладывает его на части)
+function sizeOf(st) {
+  const v = st.getPropertyValue('font-size').trim();
+  if (v) return v;
+  const f = st.getPropertyValue('font').trim(); if (!f) return '';
+  if (/^(inherit|initial|unset|revert)$/.test(f)) return f;
+  const m = f.match(/(?:^|\s)((?:\d*\.)?\d+(?:px|em|rem|%))(?=\s*\/|\s)/); return m ? m[1] : '';
+}
+// шрифт правила: font-family или хвост шорткода font; пусто — наследуется (почти всегда это --sans)
+function famOf(st) {
+  const ff = st.getPropertyValue('font-family').trim(); if (ff) return ff;
+  const f = st.getPropertyValue('font').trim(); if (!f || /^(inherit|initial|unset|revert)$/.test(f)) return '';
+  const m = f.match(/(?:^|\s)(?:\d*\.)?\d+(?:px|em|rem|%)(?:\s*\/\s*\S+)?\s+(.+)$/); return m ? m[1] : '';
+}
+const famPix = fam => !fam || fam === 'inherit' || /var\(--sans\b|hu-pixel/.test(fam);
+function pixVal(v, z, mfs) {
+  let m = v.match(/^((?:\d*\.)?\d+)px$/); if (m) return pixPx(pixK(+m[1], z), z) + 'px';
+  m = v.match(/^calc\(\s*var\(--mfs(?:,\s*[\d.]+px)?\)\s*\*\s*([\d.]+)\s*\)$/); if (m) return pixPx(pixK(mfs * +m[1], z), z) + 'px';
+  return v; // em, %, var(--mfs) — как есть (порядок перекрытия правил сохраняется)
+}
+function pixRules(rules, z, pre, mfs, out) {
+  for (const r of rules) {
+    if (r.cssRules && r.media) { const inn = []; pixRules(r.cssRules, z, pre, mfs, inn); if (inn.length) out.push(`@media ${r.media.mediaText}{${inn.join('')}}`); continue; }
+    if (!r.style || !r.selectorText) continue;
+    let v = sizeOf(r.style); if (!v) continue;
+    if (famPix(famOf(r.style))) v = pixVal(v, z, mfs); // моно и прочие шрифты — свой размер, только порядок правил
+    const sel = splitSel(r.selectorText).map(x => /^(html|:root)\b/.test(x) ? x.replace(/^(html|:root)/, pre) : pre + ' ' + x).join(',');
+    out.push(`${sel}{font-size:${v}}`);
+  }
+}
+let pixEl = null, pixSig = '';
+function pixSheet(on) {
+  if (!on) { if (pixEl) { pixEl.remove(); pixEl = null; pixSig = ''; } return; }
+  const z = appZoom(), mfs = clamp(+prefs.msgSize || 15, 12, 20), sig = [devicePixelRatio, z, mfs].join();
+  if (pixEl && sig === pixSig) return;
+  const t0 = performance.now(), base = [], app = [];
+  for (const sh of document.styleSheets) {
+    if (sh.ownerNode === pixEl) continue;
+    let rs; try { rs = sh.cssRules; } catch (_) { continue; }
+    pixRules(rs, 1, ':root[data-font="pixel"]', mfs, base);
+    if (z !== 1) pixRules(rs, z, ':root[data-font="pixel"] .js-app', mfs, app);
+  }
+  if (!pixEl) { pixEl = document.createElement('style'); pixEl.id = 'pixsnap'; document.head.appendChild(pixEl); }
+  pixEl.textContent = ':root[data-font="pixel"]{font-synthesis:none}:root[data-font="pixel"] *{letter-spacing:0!important}' + base.join('') + app.join('');
+  pixSig = sig;
+  if (location.search.includes('pixdbg')) console.log('pixsnap', base.length + app.length, 'rules', (performance.now() - t0).toFixed(1) + 'ms');
+}
+// сменился масштаб Windows / зум окна — пересчитать чёткие размеры
+let dprMq = null;
+function watchDpr() { if (dprMq) dprMq.removeEventListener('change', onDpr); dprMq = matchMedia(`(resolution: ${devicePixelRatio}dppx)`); dprMq.addEventListener('change', onDpr); }
+function onDpr() { watchDpr(); if (R.dataset.font === 'pixel') applyFont(); }
+watchDpr();
+let fitT = 0;
+bus.on('fit', () => { if (R.dataset.font !== 'pixel') return; clearTimeout(fitT); fitT = setTimeout(applyFont, 120); });
 let wallUrl = '';
 export async function applyWall() {
   const el = document.querySelector('.js-wall'); if (!el) return;

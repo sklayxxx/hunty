@@ -121,7 +121,7 @@ export async function notify({ tone: t = 'msg', say, force } = {}) {
   if (dnd() && !force) return;
   sfx(SFX[t] ? t : 'msg');
   if (say) speak(say);
-  if (prefs.flash && !(await focused())) attention();
+  if ((prefs.flash || t === 'ring') && !(await focused())) attention(t);
   // браузерный режим: вкладка свёрнута — показываем системное уведомление
   if (!inTauri && say && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
     try { const n = new Notification('Hunty', { body: say, icon: '/icon.png', tag: 'hunty-' + t, silent: true }); n.onclick = () => { window.focus(); n.close(); }; } catch (_) {}

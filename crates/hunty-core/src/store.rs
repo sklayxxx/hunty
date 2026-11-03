@@ -50,6 +50,9 @@ pub struct Friend {
     /// адреса из кода дружбы (пока не подключились)
     #[serde(default)]
     pub hint: Vec<String>,
+    /// входящая заявка: когда он её отправил (его часы) — чтобы после отказа отличить новую заявку от повтора старой
+    #[serde(default)]
+    pub want: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -221,6 +224,9 @@ pub struct PeerCache {
     /// друг держит свой ПК сервером — стучусь к нему первым
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub server: bool,
+    /// до друга можно достучаться напрямую (белый IP / UPnP) — «хаб»: звоню ему чаще, резерв и знакомства — у него
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hub: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -262,6 +268,9 @@ pub struct Store {
     pub friends: BTreeMap<String, Friend>,
     pub rooms: BTreeMap<String, Room>,
     pub peers: BTreeMap<String, PeerCache>,
+    /// «свои» публичные ретрансляторы (полные адреса …/p2p/ID): после перезапуска резервируюсь там же —
+    /// мой адрес «через ретранслятор» не меняется, и друзья достучатся по старому кешу за секунды
+    pub relays: Vec<String>,
     pub config: Config,
     pub blocked: BTreeMap<String, Blocked>,
     msgs: HashMap<String, Vec<Msg>>,
@@ -321,6 +330,7 @@ impl Store {
             friends: load(&dir.join("friends.json")),
             rooms: load(&dir.join("rooms.json")),
             peers: load(&dir.join("peers.json")),
+            relays: load(&dir.join("relays.json")),
             config: if dir.join("config.json").exists() { load(&dir.join("config.json")) } else { Config::default() },
             blocked: load(&dir.join("blocked.json")),
             msgs: HashMap::new(),
@@ -435,6 +445,9 @@ impl Store {
     }
     pub fn save_peers(&self) {
         self.json("peers.json", &self.peers)
+    }
+    pub fn save_relays(&self) {
+        self.json("relays.json", &self.relays)
     }
     pub fn save_config(&self) {
         self.json("config.json", &self.config)

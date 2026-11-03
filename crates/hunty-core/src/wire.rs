@@ -53,8 +53,21 @@ impl Node {
         r.is_member(&p.to_string()).then(|| (room.clone(), vs.clone()))
     }
 
+    /// До меня можно достучаться из интернета напрямую: белый IP (autonat) или порт проброшен (UPnP).
+    pub(crate) fn reachable(&self) -> bool {
+        self.nat == "public" || self.upnp_state == "порт проброшен"
+    }
+
     pub(crate) fn relay_capable(&self) -> bool {
         self.swarm.behaviour().relay.is_enabled() && self.nat == "public"
+    }
+
+    /// Моя заявка ему ещё висит — когда я её отправил.
+    fn want_ts(&self, p: &PeerId) -> u64 {
+        match self.st.friends.get(&p.to_string()) {
+            Some(f) if f.state == FriendState::Outgoing => f.since.max(1),
+            _ => 0,
+        }
     }
 
     pub(crate) fn hello_req(&self, p: &PeerId) -> Req {
@@ -66,6 +79,8 @@ impl Node {
             voice: self.voice_for(p),
             lvl: LEVEL,
             server: self.server,
+            hub: self.reachable(),
+            want: self.want_ts(p),
         }
     }
 
@@ -78,6 +93,8 @@ impl Node {
             voice: self.voice_for(p),
             lvl: LEVEL,
             server: self.server,
+            hub: self.reachable(),
+            want: self.want_ts(p),
         }
     }
 
@@ -163,18 +180,23 @@ impl Node {
         }
     }
 
-    fn process_hello(&mut self, peer: PeerId, profile: Profile, rel: String, rooms: Vec<RoomSync>, voice: Option<(String, VoiceState)>, caps: Option<Caps>) {
+    fn process_hello(&mut self, peer: PeerId, profile: Profile, rel: String, rooms: Vec<RoomSync>, voice: Option<(String, VoiceState)>, caps: Option<Caps>, want: u64) {
         let ps = peer.to_string();
+        // я отклонил его заявку / удалил его, пока он был не в сети — говорю ему сейчас, и заявка не всплывает снова
+        let rel = if rel != "none" && !self.st.friends.contains_key(&ps) && self.said_no(peer, want) { "none".to_string() } else { rel };
         let first = !self.online.contains_key(&peer);
-        let o = self.online.entry(peer).or_insert(Online { since: now_ms(), rtt: None, relay: false, rtt_sent: None, lvl: 0, server: false });
+        let o = self.online.entry(peer).or_insert(Online { since: now_ms(), rtt: None, relay: false, rtt_sent: None, lvl: 0, server: false, hub: false });
         if let Some(c) = caps {
             o.relay = c.relay;
             o.lvl = c.lvl;
             o.server = c.server;
-            // друг держит сервер — запомню, чтобы в следующий раз стучаться к нему первым
+            o.hub = c.hub || c.server;
+            // друг держит сервер / до него можно достучаться напрямую — запомню, чтобы в следующий раз стучаться к нему первым
             if let Some(pc) = self.st.peers.get_mut(&ps) {
-                if pc.server != c.server {
+                let hub = c.hub || c.server;
+                if pc.server != c.server || pc.hub != hub {
                     pc.server = c.server;
+                    pc.hub = hub;
                     self.peers_dirty = true;
                 }
             }
@@ -205,7 +227,7 @@ impl Node {
             (None, "want") => {
                 self.st.friends.insert(
                     ps.clone(),
-                    Friend { peer: ps.clone(), profile: profile.clone(), state: FriendState::Incoming, since: now_ms(), dm: String::new(), hint: vec![] },
+                    Friend { peer: ps.clone(), profile: profile.clone(), state: FriendState::Incoming, since: now_ms(), dm: String::new(), hint: vec![], want },
                 );
                 self.st.save_friends();
                 let v = self.friend_json(&ps);
@@ -477,7 +499,7 @@ impl Node {
                 self.refresh_allow();
                 let v = self.room_json(&id);
                 self.emit("room", json!({ "room": v, "added_by": ps }));
-                self.log("ping", format!("{} позвал тебя в хату «{}»", self.nick(&ps), w.name));
+                self.log("ping", format!("{} позвал тебя в группу «{}»", self.nick(&ps), w.name));
                 self.sync_from(peer, &id);
             }
             Some((true, _, _)) => {
@@ -503,7 +525,7 @@ impl Node {
                     self.st.drop_room(&id);
                     self.refresh_allow();
                     self.emit("room_removed", json!({ "room": id, "why": "kick" }));
-                    self.log("warn", format!("тебя убрали из хаты «{name}»"));
+                    self.log("warn", format!("тебя выгнали из группы «{name}»"));
                     return;
                 }
                 if changed {
@@ -523,7 +545,7 @@ impl Node {
         let v = self.room_json(id);
         self.emit("room", json!({ "room": v, "joined": true }));
         let name = self.st.rooms.get(id).map(|r| r.name.clone()).unwrap_or_default();
-        self.log("ok", format!("ты в хате «{name}» · история подтягивается от участников"));
+        self.log("ok", format!("ты в группе «{name}» · история подтягивается от участников"));
         self.sync_from(peer, id);
         // знакомлюсь с остальными
         let others: Vec<PeerId> = self
@@ -545,9 +567,9 @@ impl Node {
 
     fn on_join(&mut self, peer: PeerId, room: String, secret: String, profile: Profile) -> Resp {
         let ps = peer.to_string();
-        let Some(r) = self.st.rooms.get_mut(&room) else { return Resp::Err { e: "нет такой хаты".into() } };
+        let Some(r) = self.st.rooms.get_mut(&room) else { return Resp::Err { e: "нет такой группы".into() } };
         if r.pending || r.kind != "group" {
-            return Resp::Err { e: "нет такой хаты".into() };
+            return Resp::Err { e: "нет такой группы".into() };
         }
         if r.secret.is_empty() || r.secret != secret {
             return Resp::Err { e: "инвайт устарел — попроси новый".into() };
@@ -626,12 +648,13 @@ impl Node {
         match req {
             Req::Ping => Resp::Ok,
             Req::Whois => Resp::Profile { profile: self.profile() },
-            Req::Hello { profile, rel, rooms, relay, voice, lvl, server } => {
+            Req::Hello { profile, rel, rooms, relay, voice, lvl, server, hub, want } => {
                 if !self.known(&peer) && rel != "want" {
+                    self.said_no(peer, want);
                     return Resp::Err { e: "не знакомы".into() };
                 }
                 self.hello_inflight.remove(&peer);
-                self.process_hello(peer, profile, rel, rooms, voice, Some(Caps { relay, lvl, server }));
+                self.process_hello(peer, profile, rel, rooms, voice, Some(Caps { relay, lvl, server, hub }), want);
                 self.hello_resp(&peer)
             }
             Req::Profile { profile } => {
@@ -640,7 +663,7 @@ impl Node {
             }
             Req::FriendReq { .. } | Req::FriendAccept { .. } if self.st.blocked.contains_key(&ps) => Resp::Err { e: "не принимаю заявки".into() },
             Req::FriendReq { profile } | Req::FriendAccept { profile } => {
-                self.process_hello(peer, profile, "want".into(), vec![], None, None);
+                self.process_hello(peer, profile, "want".into(), vec![], None, None, u64::MAX);
                 self.hello_resp(&peer)
             }
             Req::FriendRemove => {
@@ -704,9 +727,9 @@ impl Node {
     pub(crate) fn on_resp(&mut self, peer: PeerId, pend: Pend, resp: Resp) {
         let ps = peer.to_string();
         match (pend, resp) {
-            (Pend::Hello, Resp::Hello { profile, rel, rooms, relay, voice, lvl, server }) => {
+            (Pend::Hello, Resp::Hello { profile, rel, rooms, relay, voice, lvl, server, hub, want }) => {
                 self.hello_inflight.remove(&peer);
-                self.process_hello(peer, profile, rel, rooms, voice, Some(Caps { relay, lvl, server }));
+                self.process_hello(peer, profile, rel, rooms, voice, Some(Caps { relay, lvl, server, hub }), want);
             }
             (Pend::Seek, Resp::Seen { found }) => {
                 for s in found {
@@ -767,7 +790,7 @@ impl Node {
             }
             (Pend::Join(room), Resp::Err { e }) => {
                 self.join_sent.remove(&room);
-                self.log("err", format!("в хату не пустили: {e}"));
+                self.log("err", format!("в группу не пустили: {e}"));
                 self.emit("join_failed", json!({ "room": room, "error": e }));
             }
             (Pend::Sync(room), Resp::Sync { msgs, more }) => {

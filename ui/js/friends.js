@@ -77,6 +77,8 @@ $('.js-fform', w).addEventListener('submit', e => { e.preventDefault(); doFind(f
 fnick.addEventListener('paste', () => setTimeout(() => { if (isCode(fnick.value.trim())) doFind(fnick.value); }, 0));
 OPEN.friend = (_, o) => { fres.innerHTML = ''; fnick.value = o.code || ''; renderReqs(); refreshCode(); if (o.code) doFind(o.code); };
 bus.on('friend', () => { if (winOpen() === 'friend') renderReqs(); });
+// друг удалил меня / отклонил мою заявку — список и заявки обновляются сразу, а не после перезапуска
+bus.on('friend_removed', () => { renderLists(); if (winOpen() === 'friend') renderReqs(); });
 bus.on('nearby', () => { if (winOpen() === 'friend') renderReqs(); renderLists(); });
 
 /* ---------- действия с заявками (из списка и из окна) ---------- */

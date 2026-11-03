@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, UserAttentionType, WebviewWindow};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, UserAttentionType, WebviewWindow, WindowEvent};
 use tokio::sync::RwLock;
 
 #[derive(Default)]
@@ -18,6 +20,11 @@ struct Core {
     restarting: AtomicBool,
 }
 type CoreS<'a> = State<'a, Arc<Core>>;
+
+/// значок в трее есть → крестик окна прячет Hunty в трей (друзья видят тебя в сети, звонки доходят)
+static TRAY: AtomicBool = AtomicBool::new(false);
+/// «Выйти из Hunty» (трей, обновление): крестик/выход больше не перехватываем
+static QUIT: AtomicBool = AtomicBool::new(false);
 
 /// любая команда ядра: {"cmd":"send","room":…,"text":…}
 #[tauri::command]
@@ -143,13 +150,18 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
 #[tauri::command]
 async fn hunty_restart(app: AppHandle, core: CoreS<'_>) -> Result<(), String> {
     core.restarting.store(true, Ordering::SeqCst);
+    QUIT.store(true, Ordering::SeqCst);
     stop_core(&core).await;
     app.restart();
 }
 
-/// мигнуть в панели задач (звонок, упоминание)
+/// мигнуть в панели задач (звонок, упоминание); Hunty спрятан в трей и звонят — окно показываем
 #[tauri::command]
-fn hunty_attention(window: WebviewWindow) {
+fn hunty_attention(window: WebviewWindow, kind: Option<String>) {
+    if kind.as_deref() == Some("ring") && !window.is_visible().unwrap_or(true) {
+        let _ = window.show();
+        let _ = window.unminimize();
+    }
     if !window.is_focused().unwrap_or(false) {
         let _ = window.request_user_attention(Some(UserAttentionType::Informational));
     }
@@ -411,6 +423,7 @@ async fn hunty_update_run(app: AppHandle, core: CoreS<'_>) -> Result<(), String>
         };
         powershell(&script).map_err(|e| format!("PowerShell не запустился: {e}"))?;
         core.restarting.store(true, Ordering::SeqCst);
+        QUIT.store(true, Ordering::SeqCst);
         stop_core(&core).await;
         app.exit(0);
         Ok(())
@@ -566,18 +579,51 @@ fn nav_ok(url: &tauri::Url) -> bool {
     }
 }
 
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// трей: клик — открыть окно, правый клик — «Открыть Hunty» / «Выйти из Hunty» (выход — по-настоящему, с остановкой ядра)
+fn make_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Открыть Hunty", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Выйти из Hunty", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &sep, &quit])?;
+    let mut tb = TrayIconBuilder::with_id("hunty")
+        .tooltip("Hunty")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "open" => show_main(app),
+            "quit" => {
+                QUIT.store(true, Ordering::SeqCst);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, ev| match ev {
+            TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
+                show_main(tray.app_handle())
+            }
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tb = tb.icon(icon.clone());
+    }
+    tb.build(app)?;
+    Ok(())
+}
+
 fn main() {
     let core = Arc::new(Core::default());
     let mut b = tauri::Builder::default();
     if std::env::var_os("HUNTY_DATA").is_none() {
         // второй запуск просто поднимает уже открытое окно
-        b = b.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-        }));
+        b = b.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
     }
     let guard = tauri::plugin::Builder::<tauri::Wry, ()>::new("hunty-guard").on_navigation(|_, url| nav_ok(url)).build();
     let app = b
@@ -586,6 +632,15 @@ fn main() {
             media_protocol(ctx.app_handle().clone(), req.uri().path().to_string(), responder);
         })
         .manage(core.clone())
+        .on_window_event(|w, ev| {
+            // крестик — в трей (если трей поднялся); выход — из меню трея
+            if let WindowEvent::CloseRequested { api, .. } = ev {
+                if w.label() == "main" && TRAY.load(Ordering::SeqCst) && !QUIT.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = w.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             hunty,
             hunty_open,
@@ -608,6 +663,10 @@ fn main() {
             }
             #[cfg(windows)]
             keep_awake(&data_dir(app.handle()));
+            match make_tray(app) {
+                Ok(()) => TRAY.store(true, Ordering::SeqCst),
+                Err(e) => tracing::warn!("трей не поднялся: {e} — крестик закрывает Hunty"),
+            }
             start_core(app.handle().clone(), core.clone());
             Ok(())
         })
