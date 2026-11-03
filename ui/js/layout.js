@@ -1,5 +1,5 @@
 // Раскладка: щели между панелями тянутся, мини-окно звонка таскается и липнет к углам, жидкое стекло
-import { $, $$, R, clamp, mobile, reduce, prefs, setPref, bus } from './core.js';
+import { $, $$, R, clamp, mobile, reduce, prefs, setPref, bus, idle } from './core.js';
 import { app, tmsg } from './ui.js';
 
 const tilesEl = $('.tiles'), listP = $('.pane.list'), chatP = $('.pane.chat'), stageP = $('.js-stage'), stb = $('.js-stb');
@@ -202,7 +202,8 @@ if (!LGOK) $('.js-glassmode button[data-g="liquid"]').title = 'в этом бр�
 bus.on('pref', (k, v) => { if (k === 'glassA') setGA(v); if (k === 'lite') setGlass(prefs.glass || 'liquid'); });
 export function initLayout() {
   setGlass(prefs.glass || 'liquid'); setGA();
-  lgScan();
+  // карты преломления считаются попиксельно — после первого кадра, когда браузер свободен
+  idle(() => lgScan());
   // тосты приходят и уходят: фильтр стекла убираем вместе с тостом, чтобы не копились
   new MutationObserver(ms => ms.forEach(m => {
     m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.matches(LGSEL)) lgAttach(n); });

@@ -38,9 +38,10 @@ function bootScreen() {
   document.body.appendChild(b);
   const pre = $('pre', b); let q = Promise.resolve(), skip = false, gone = false;
   b.addEventListener('click', () => { skip = true; hide(); });
-  const line = html => { q = q.then(async () => { if (gone) return; pre.insertAdjacentHTML('beforeend', html + '\n'); if (!skip) await sleep(110); }); return q; };
-  function hide() { if (gone) return; gone = true; b.classList.add('gone'); setTimeout(() => b.remove(), 500); }
-  return { line, done: async () => { await q; if (!skip) await sleep(380); hide(); }, hide, el: b };
+  const line = html => { q = q.then(async () => { if (gone) return; pre.insertAdjacentHTML('beforeend', html + '\n'); if (!skip) await sleep(26); }); return q; };
+  // v0.5: лог пролетает за ~0.3 с и сразу уходит — раньше экран держал старт на 1.5–2 с
+  function hide() { if (gone) return; gone = true; b.classList.add('gone'); setTimeout(() => b.remove(), 200); }
+  return { line, done: async () => { await q; if (!skip) await sleep(120); hide(); }, hide, el: b };
 }
 
 /* ---------- старт ---------- */

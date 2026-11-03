@@ -10,7 +10,22 @@ def icon(m, cls='ic'):
     n = m.group(1)
     assert n in have, 'нет иконки ' + n
     return f'<svg class="{cls}" aria-hidden="true"><use href="#i-{n}"/></svg>'
-out = src.replace('{{SPRITE}}', sprite).replace('{{LOGO}}', LOGO)
+# modulepreload: все модули, до которых main.js дотягивается статическими import, браузер качает сразу
+# параллельно, а не «лесенкой» по уровням импорта (минус ~100–150 мс к старту, в WebView2 — больше)
+JS = T.parent / 'js'
+IMP = re.compile(r"""^\s*(?:import|export)\b[^'"()]*?(?:from\s*)?['"](\.{1,2}/[^'"]+)['"]""", re.M)
+def graph(entry):
+    seen, todo = [], [entry]
+    while todo:
+        f = todo.pop(0)
+        if f in seen: continue
+        seen.append(f)
+        for rel in IMP.findall(f.read_text(encoding='utf-8')):
+            todo.append((f.parent / rel).resolve())
+    return seen
+mods = [m for m in graph((JS / 'main.js').resolve()) if m.name != 'main.js']
+PRELOAD = '\n'.join(f'<link rel="modulepreload" href="{m.relative_to(T.parent.resolve()).as_posix()}">' for m in mods)
+out = src.replace('{{SPRITE}}', sprite).replace('{{LOGO}}', LOGO).replace('{{PRELOAD}}', PRELOAD)
 out = re.sub(r'\{\{I:([a-z0-9-]+)\}\}', icon, out)
 out = re.sub(r'\{\{WI:([a-z0-9-]+)\}\}', lambda m: icon(m, 'ic wi'), out)
 assert '{{' not in out

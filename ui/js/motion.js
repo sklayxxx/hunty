@@ -1,9 +1,9 @@
-// Движение: FLIP-перестановки, «полёт» сообщения при отправке, пружины. Лёгкий режим и «меньше движения» — без анимаций.
+// Движение: FLIP-перестановки, «полёт» сообщения при отправке. Одна кривая без «пружины» (unslop, v0.5). Лёгкий режим и «меньше движения» — без анимаций.
 import { $, $$, R, reduce } from './core.js';
 
 export const still = () => reduce || R.classList.contains('lite') || R.classList.contains('hid');
-export const SPRING = 'linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 19.4%, 1.067, 1.099 24.3%, 1.108 26%, 1.1, 1.077 30.6%, 1.035 34.1%, 0.998 38.4%, 0.985 41.1%, 0.981 44.1%, 0.991 51.6%, 1.002 59.9%, 1.001 75.5%, 1)';
-export const SOFT = 'linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001)';
+export const SPRING = 'cubic-bezier(.22,1,.36,1)';
+export const SOFT = 'cubic-bezier(.22,1,.36,1)';
 const app = () => $('.js-app');
 /** во сколько раз отмасштабировано окно (зум под маленький экран) — для элементов внутри .app */
 export function zoomOf(el) { const a = app(); return a && (!el || a.contains(el)) ? (+a.style.zoom || 1) : 1; }
@@ -14,6 +14,7 @@ export function flip(box, sel, change, { dur = 420, ease = SOFT, enter = true } 
   const z = zoomOf(box), before = new Map();
   $$(sel, box).forEach(e => { const k = keyOf(e); if (k) before.set(k, e.getBoundingClientRect()); });
   change();
+  if (!before.size) return; // первый рендер: двигать нечего — и лишний пересчёт раскладки не нужен
   $$(sel, box).forEach(e => {
     const k = keyOf(e), a = before.get(k), b = e.getBoundingClientRect();
     if (!a) { if (enter && before.size) e.animate([{ opacity: 0, transform: 'translateY(-6px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: SOFT }); return; }

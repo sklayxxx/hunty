@@ -9,10 +9,14 @@
 <link rel="apple-touch-icon" href="icon.png">
 <meta name="theme-color" content="#000000">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%23000%22/%3E%3Crect x=%224%22 y=%224%22 width=%223%22 height=%228%22 fill=%22%237ee2b8%22/%3E%3Crect x=%229%22 y=%224%22 width=%223%22 height=%228%22 fill=%22%237ee2b8%22/%3E%3Crect x=%224%22 y=%227%22 width=%228%22 height=%222%22 fill=%22%237ee2b8%22/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/nunito.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/proto.css">
+<link rel="stylesheet" href="css/fonts.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/v3.css">
 <link rel="stylesheet" href="css/v4.css">
+<link rel="modulepreload" href="js/main.js">
+{{PRELOAD}}
 </head>
 <body>
 {{SPRITE}}
@@ -301,8 +305,14 @@
             <button type="button" role="radio" data-f="soft"><b class="ff-soft">Аа</b><span>Мягкий</span></button>
             <button type="button" role="radio" data-f="onest"><b class="ff-onest">Аа</b><span>Простой</span></button>
             <button type="button" role="radio" data-f="round"><b class="ff-round">Аа</b><span>Круглый</span></button>
+            <button type="button" role="radio" data-f="book"><b class="ff-book">Аа</b><span>Книжный</span></button>
+            <button type="button" role="radio" data-f="slab"><b class="ff-slab">Аа</b><span>Брусок</span></button>
+            <button type="button" role="radio" data-f="wide"><b class="ff-wide">Аа</b><span>Широкий</span></button>
+            <button type="button" role="radio" data-f="hand"><b class="ff-hand">Аа</b><span>Рукописный</span></button>
+            <button type="button" role="radio" data-f="comic"><b class="ff-comic">Аа</b><span>Комикс</span></button>
             <button type="button" role="radio" data-f="mono"><b class="ff-mono">Аа</b><span>Консоль</span></button>
             <button type="button" role="radio" data-f="pixel"><b class="ff-pixel">Аа</b><span>Пиксели</span></button>
+            <button type="button" role="radio" data-f="board"><b class="ff-board">Аа</b><span>Табло</span></button>
             <button type="button" role="radio" data-f="system"><b class="ff-system">Аа</b><span>Как в Windows</span></button>
           </div>
           <div class="row"><div class="lab"><b>Размер текста в чате</b></div><div class="rgw"><input type="range" class="rg" min="13" max="19" step="1" data-pref="msgSize" data-unit=" px" aria-label="Размер текста в чате"><span class="rgv">15 px</span></div></div>
@@ -373,12 +383,14 @@
         </div>
         <div class="spage" data-page="net">
           <div class="nethero js-nethero"><span class="nh-ic js-nhic">{{I:wifi}}</span><span class="nh-t"><b class="js-nhb">Смотрю, как дела со связью…</b><small class="js-nhs"></small><small class="nh-test js-nettest"></small></span><button class="gbtn sm js-netbtn" type="button">{{I:activity}}Проверить</button></div>
-          <div class="row"><div class="lab"><b>Помогать друзьям со связью</b><small>если у кого-то не пробилось — пойдёт через тебя (только друзья и группы)</small></div><input class="tg" type="checkbox" data-cfg="relay_server" aria-label="Ретранслятор"></div>
+          <div class="row"><div class="lab"><b>Этот комп — сервер для друзей</b><small>друзья находят друг друга через тебя за секунду и созваниваются, даже когда у них не пробивается напрямую. Держи Hunty включённым, свернуть можно</small></div><input class="tg" type="checkbox" data-cfg="server" aria-label="Сервер для друзей"></div>
+          <div class="srvbox js-srvbox" hidden></div>
+          <div class="row"><div class="lab"><b>Помогать друзьям со связью</b><small>каждый Hunty — мини-сервер: знакомит твоих друзей между собой, а если у кого-то не пробилось — пропускает связь через тебя (только друзья и группы)</small></div><input class="tg" type="checkbox" data-cfg="relay_server" aria-label="Ретранслятор"></div>
           <div class="row"><div class="lab"><b>Открывать порт на роутере</b><small>друзья подключатся к тебе напрямую — звук без задержек</small></div><input class="tg" type="checkbox" data-cfg="upnp" aria-label="UPnP"></div>
           <div class="row"><div class="lab"><b>Искать друзей через интернет</b><small>через общую сеть IPFS — своих серверов у Hunty нет</small></div><input class="tg" type="checkbox" data-cfg="dht" aria-label="Искать друзей через интернет"></div>
           <details class="geek js-geek">
             <summary>{{I:chevron-right}}Подробнее — для тех, кто шарит</summary>
-            <div class="netcard js-netcard"><span class="big">Серверов: 0</span><ul class="js-netul"></ul></div>
+            <div class="netcard js-netcard"><span class="big">Центральных серверов: 0</span><ul class="js-netul"></ul></div>
             <div class="row"><div class="lab"><b>Порт</b><small>0 — любой свободный</small></div><input class="inp js-port" type="number" min="0" max="65535" style="width:110px" aria-label="Порт"></div>
             <div class="sec">Мои адреса</div>
             <div class="addrs js-addrs"></div>
@@ -390,7 +402,7 @@
         <div class="spage" data-page="about">
           <div class="about">
             <span class="big">{{LOGO}}Hunty</span>
-            <span class="js-ver">v0.4.0 · бесплатно навсегда</span>
+            <span class="js-ver">v0.5.0 · бесплатно навсегда</span>
             <span class="dim">P2P: libp2p (QUIC/TCP, Noise, DHT, relay, hole punching) · голос и демка — WebRTC</span>
             <button class="gbtn sm js-upd">Проверить обновления</button>
             <span class="dim js-updst"></span>

@@ -920,6 +920,14 @@ impl Node {
                 if let Some(x) = b(&v, "relay_server") {
                     cfg.relay_server = x;
                 }
+                if let Some(x) = b(&v, "server") {
+                    cfg.server = x;
+                    // сервер без ретранслятора и проброса порта бессмысленен
+                    if x {
+                        cfg.relay_server = true;
+                        cfg.upnp = true;
+                    }
+                }
                 if let Some(x) = v.get("ice") {
                     if x.is_array() {
                         cfg.ice = x.clone();

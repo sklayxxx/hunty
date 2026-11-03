@@ -4,6 +4,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const PROTOCOL: &str = "/hunty/1.0.0";
+/// Уровень протокола: 2 — умеет Seek/Intro (v0.5). Старые узлы присылают 0.
+pub const LEVEL: u8 = 2;
+
+/// Как достучаться до пира, которого видит общий друг (мини-сервер).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct Seen {
+    pub peer: String,
+    /// как его вижу я (наблюдаемый адрес — дырка в его NAT) + его собственные адреса
+    #[serde(default)]
+    pub addrs: Vec<String>,
+    /// у него резерв на мне — можно пройти цепочкой через меня (p2p-circuit)
+    #[serde(default)]
+    pub hop: bool,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct VoiceState {
@@ -66,6 +80,12 @@ pub enum Req {
         relay: bool,
         #[serde(default)]
         voice: Option<(String, VoiceState)>,
+        /// уровень протокола (см. LEVEL)
+        #[serde(default)]
+        lvl: u8,
+        /// этот ПК — сервер для друзей: всегда в сети, знакомит и ретранслирует
+        #[serde(default)]
+        server: bool,
     },
     Whois,
     Profile { profile: Profile },
@@ -80,6 +100,10 @@ pub enum Req {
     Voice { room: String, state: Option<VoiceState> },
     Rtc { room: String, data: Value },
     Ping,
+    /// «ищу вот этих — кого-нибудь видишь?» — друг работает мини-сервером знакомств
+    Seek { want: Vec<String> },
+    /// знакомство от общего друга: вот он, в сети, звони навстречу
+    Intro { seen: Seen },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -95,8 +119,16 @@ pub enum Resp {
         relay: bool,
         #[serde(default)]
         voice: Option<(String, VoiceState)>,
+        /// уровень протокола (см. LEVEL)
+        #[serde(default)]
+        lvl: u8,
+        /// этот ПК — сервер для друзей: всегда в сети, знакомит и ретранслирует
+        #[serde(default)]
+        server: bool,
     },
     Profile { profile: Profile },
     Joined { room: RoomWire },
     Sync { msgs: Vec<Msg>, more: bool },
+    /// ответ на Seek: кого из искомых я вижу прямо сейчас
+    Seen { found: Vec<Seen> },
 }

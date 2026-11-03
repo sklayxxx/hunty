@@ -1,0 +1,43 @@
+/* Сгенерировано ui/tools/fonts.py — руками не править. Шрифты: OFL 1.1 / Apache 2.0, см. fonts/LICENSE.md */
+/* У каждого шрифта интерфейса свой size-adjust: на глаз и по ширине он как «Мягкий» (Nunito) — вёрстка не прыгает. */
+@font-face{font-family:"hu-soft";src:url(../fonts/nunito.woff2) format("woff2");font-weight:200 1000;font-display:swap}
+@font-face{font-family:"hu-onest";src:url(../fonts/onest-lat.woff2) format("woff2");font-weight:400 800;font-display:swap;size-adjust:94%;unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"hu-onest";src:url(../fonts/onest-cyr.woff2) format("woff2");font-weight:400 800;font-display:swap;size-adjust:94%;unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116}
+@font-face{font-family:"hu-round";src:url(../fonts/comfortaa.woff2) format("woff2");font-weight:300 700;font-display:swap;size-adjust:87%}
+@font-face{font-family:"hu-book";src:url(../fonts/literata.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:94%}
+@font-face{font-family:"hu-slab";src:url(../fonts/robotoslab.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:92%}
+@font-face{font-family:"hu-wide";src:url(../fonts/unbounded.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:80%}
+@font-face{font-family:"hu-hand";src:url(../fonts/caveat.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:132%}
+@font-face{font-family:"hu-comic";src:url(../fonts/pangolin.woff2) format("woff2");font-weight:400;font-display:swap;size-adjust:98%}
+@font-face{font-family:"hu-mono";src:url(../fonts/jbmono-lat.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:84%;unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"hu-mono";src:url(../fonts/jbmono-cyr.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:84%;unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116}
+@font-face{font-family:"hu-pixel";src:url(../fonts/pix-lat.woff2) format("woff2");font-weight:400;font-display:swap;size-adjust:55%;unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"hu-pixel";src:url(../fonts/pix-cyr.woff2) format("woff2");font-weight:400;font-display:swap;size-adjust:55%;unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116}
+@font-face{font-family:"hu-board";src:url(../fonts/handjet.woff2) format("woff2");font-weight:400 700;font-display:swap;size-adjust:119%}
+@font-face{font-family:"Pix";src:url(../fonts/pix-lat.woff2) format("woff2");font-display:block;unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"Pix";src:url(../fonts/pix-cyr.woff2) format("woff2");font-display:block;unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116}
+:root{--sans:"hu-soft",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+html[data-font="onest"]{--sans:"hu-onest","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="round"]{--sans:"hu-round","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="book"]{--sans:"hu-book","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="slab"]{--sans:"hu-slab","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="wide"]{--sans:"hu-wide","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="hand"]{--sans:"hu-hand","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="comic"]{--sans:"hu-comic","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="mono"]{--sans:"hu-mono","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="pixel"]{--sans:"hu-pixel","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="board"]{--sans:"hu-board","hu-soft",ui-sans-serif,system-ui,sans-serif}
+html[data-font="system"]{--sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+html[data-font="pixel"] body{letter-spacing:.01em}
+.ff-soft{font-family:"hu-soft",sans-serif}
+.ff-onest{font-family:"hu-onest",sans-serif}
+.ff-round{font-family:"hu-round",sans-serif}
+.ff-book{font-family:"hu-book",sans-serif}
+.ff-slab{font-family:"hu-slab",sans-serif}
+.ff-wide{font-family:"hu-wide",sans-serif}
+.ff-hand{font-family:"hu-hand",sans-serif}
+.ff-comic{font-family:"hu-comic",sans-serif}
+.ff-mono{font-family:"hu-mono",sans-serif}
+.ff-pixel{font-family:"hu-pixel",sans-serif}
+.ff-board{font-family:"hu-board",sans-serif}
+.ff-system{font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}

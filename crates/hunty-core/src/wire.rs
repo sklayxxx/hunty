@@ -1,5 +1,5 @@
 //! Обработка входящих запросов и ответов протокола /hunty/1.0.0.
-use crate::node::{Node, Online, Pend};
+use crate::node::{Caps, Node, Online, Pend};
 use crate::proto::*;
 use crate::store::*;
 use crate::util::*;
@@ -64,6 +64,8 @@ impl Node {
             rooms: self.shared_rooms(p),
             relay: self.relay_capable(),
             voice: self.voice_for(p),
+            lvl: LEVEL,
+            server: self.server,
         }
     }
 
@@ -74,6 +76,8 @@ impl Node {
             rooms: self.shared_rooms(p),
             relay: self.relay_capable(),
             voice: self.voice_for(p),
+            lvl: LEVEL,
+            server: self.server,
         }
     }
 
@@ -159,11 +163,22 @@ impl Node {
         }
     }
 
-    fn process_hello(&mut self, peer: PeerId, profile: Profile, rel: String, rooms: Vec<RoomSync>, relay: bool, voice: Option<(String, VoiceState)>) {
+    fn process_hello(&mut self, peer: PeerId, profile: Profile, rel: String, rooms: Vec<RoomSync>, voice: Option<(String, VoiceState)>, caps: Option<Caps>) {
         let ps = peer.to_string();
         let first = !self.online.contains_key(&peer);
-        let o = self.online.entry(peer).or_insert(Online { since: now_ms(), rtt: None, relay: false, rtt_sent: None });
-        o.relay = relay;
+        let o = self.online.entry(peer).or_insert(Online { since: now_ms(), rtt: None, relay: false, rtt_sent: None, lvl: 0, server: false });
+        if let Some(c) = caps {
+            o.relay = c.relay;
+            o.lvl = c.lvl;
+            o.server = c.server;
+            // друг держит сервер — запомню, чтобы в следующий раз стучаться к нему первым
+            if let Some(pc) = self.st.peers.get_mut(&ps) {
+                if pc.server != c.server {
+                    pc.server = c.server;
+                    self.peers_dirty = true;
+                }
+            }
+        }
         // дружба
         let state = self.st.friends.get(&ps).map(|f| f.state.clone());
         match (state, rel.as_str()) {
@@ -255,6 +270,10 @@ impl Node {
                 _ => "напрямую",
             };
             self.log("ok", format!("{} подключился {via}", self.nick(&ps)));
+            // мини-сервер знакомств: его ждали — знакомлю; у него спрошу, кого не хватает мне
+            self.relay_bad.remove(&peer);
+            self.serve_seekers(peer);
+            self.seek_via(peer, true);
         }
         self.refresh_allow();
     }
@@ -607,12 +626,12 @@ impl Node {
         match req {
             Req::Ping => Resp::Ok,
             Req::Whois => Resp::Profile { profile: self.profile() },
-            Req::Hello { profile, rel, rooms, relay, voice } => {
+            Req::Hello { profile, rel, rooms, relay, voice, lvl, server } => {
                 if !self.known(&peer) && rel != "want" {
                     return Resp::Err { e: "не знакомы".into() };
                 }
                 self.hello_inflight.remove(&peer);
-                self.process_hello(peer, profile, rel, rooms, relay, voice);
+                self.process_hello(peer, profile, rel, rooms, voice, Some(Caps { relay, lvl, server }));
                 self.hello_resp(&peer)
             }
             Req::Profile { profile } => {
@@ -621,7 +640,7 @@ impl Node {
             }
             Req::FriendReq { .. } | Req::FriendAccept { .. } if self.st.blocked.contains_key(&ps) => Resp::Err { e: "не принимаю заявки".into() },
             Req::FriendReq { profile } | Req::FriendAccept { profile } => {
-                self.process_hello(peer, profile, "want".into(), vec![], false, None);
+                self.process_hello(peer, profile, "want".into(), vec![], None, None);
                 self.hello_resp(&peer)
             }
             Req::FriendRemove => {
@@ -671,15 +690,28 @@ impl Node {
                 }
                 Resp::Ok
             }
+            Req::Seek { want } => self.on_seek(peer, want),
+            Req::Intro { seen } => {
+                // знакомства принимаю только от тех, с кем уже на связи
+                if self.online.contains_key(&peer) {
+                    self.on_seen(peer, seen);
+                }
+                Resp::Ok
+            }
         }
     }
 
     pub(crate) fn on_resp(&mut self, peer: PeerId, pend: Pend, resp: Resp) {
         let ps = peer.to_string();
         match (pend, resp) {
-            (Pend::Hello, Resp::Hello { profile, rel, rooms, relay, voice }) => {
+            (Pend::Hello, Resp::Hello { profile, rel, rooms, relay, voice, lvl, server }) => {
                 self.hello_inflight.remove(&peer);
-                self.process_hello(peer, profile, rel, rooms, relay, voice);
+                self.process_hello(peer, profile, rel, rooms, voice, Some(Caps { relay, lvl, server }));
+            }
+            (Pend::Seek, Resp::Seen { found }) => {
+                for s in found {
+                    self.on_seen(peer, s);
+                }
             }
             (Pend::Hello, Resp::Err { e }) => {
                 self.hello_inflight.remove(&peer);

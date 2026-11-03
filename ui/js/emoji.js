@@ -1,10 +1,17 @@
 // Эмодзи картинками (Fluent Emoji 3D, MIT): в тексте, реакциях и пикере. Нет картинки — остаётся системный глиф.
 import { EK } from './emoji-keys.js';
 
-let RE;
-try { RE = new RegExp('\\p{RGI_Emoji}', 'gv'); }
-catch (_) { RE = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2})(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu; }
-const ONE = new RegExp('^(?:' + RE.source + ')$', RE.flags.replace('g', ''));
+// \p{RGI_Emoji} компилируется ~15 мс — собираем регулярки при первой встрече эмодзи, а не на старте
+let RE_ = null, ONE_ = null;
+function re() {
+  if (RE_) return RE_;
+  try { RE_ = new RegExp('\\p{RGI_Emoji}', 'gv'); }
+  catch (_) { RE_ = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2})(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu; }
+  return RE_;
+}
+const one = () => ONE_ || (ONE_ = new RegExp('^(?:' + re().source + ')$', re().flags.replace('g', '')));
+/** быстрый отсев: в строке вообще нет символов из диапазонов эмодзи */
+const MAYBE = /[\u00a9\u00ae\u203c-\u3299\ud83c-\ud83e]/;
 
 /** код картинки: кодпоинты без FE0F и без оттенков кожи (их у набора нет — берём базовый) */
 export function emoKey(g) {
@@ -23,16 +30,16 @@ export function emoImg(g, cls = 'emj') {
 /** заменить эмодзи в готовом HTML (только в тексте, не в тегах) */
 export function emo(html) {
   const s = String(html);
-  if (!/[\u00a9\u00ae\u203c-\u3299\ud83c-\ud83e]/.test(s)) return s;
-  return s.split(/(<[^>]*>)/).map((p, i) => i % 2 ? p : p.replace(RE, g => { const k = emoKey(g); return k ? `<img class="emj" src="${emoSrc(k)}" alt="${ea(g)}" draggable="false" decoding="async">` : g; })).join('');
+  if (!MAYBE.test(s)) return s;
+  return s.split(/(<[^>]*>)/).map((p, i) => i % 2 ? p : p.replace(re(), g => { const k = emoKey(g); return k ? `<img class="emj" src="${emoSrc(k)}" alt="${ea(g)}" draggable="false" decoding="async">` : g; })).join('');
 }
 /** сообщение только из эмодзи (до 27 штук) — показываем крупно */
 export function emojiOnly(t) {
-  t = String(t || '').trim(); if (!t || t.length > 200) return 0;
-  const m = t.match(RE); if (!m || m.length > 27) return 0;
-  return t.replace(RE, '').replace(/[\s\uFE0F\u200D]/g, '') === '' ? m.length : 0;
+  t = String(t || '').trim(); if (!t || t.length > 200 || !MAYBE.test(t)) return 0;
+  const m = t.match(re()); if (!m || m.length > 27) return 0;
+  return t.replace(re(), '').replace(/[\s\uFE0F\u200D]/g, '') === '' ? m.length : 0;
 }
-export const isEmoji = g => ONE.test(g);
+export const isEmoji = g => one().test(g);
 /** копирование: картинки эмодзи → обратно в символы */
 export function textOf(node) {
   const c = node.cloneNode(true);

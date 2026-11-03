@@ -73,6 +73,18 @@ pub(crate) struct Online {
     pub rtt: Option<u32>,
     pub relay: bool,
     pub rtt_sent: Option<u32>,
+    /// уровень протокола (2 — умеет знакомить: Seek/Intro)
+    pub lvl: u8,
+    /// держит ПК сервером для друзей
+    pub server: bool,
+}
+
+/// Что пир рассказал о себе в Hello (кроме профиля и хат).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Caps {
+    pub relay: bool,
+    pub lvl: u8,
+    pub server: bool,
 }
 
 pub(crate) enum Pend {
@@ -83,6 +95,7 @@ pub(crate) enum Pend {
     Check(String),
     Join(String),
     Sync(String),
+    Seek,
     Other,
 }
 
@@ -161,6 +174,22 @@ pub struct Node {
     pub(crate) started: Instant,
     pub(crate) net_sig: String,
     pub(crate) quit: bool,
+    /// мини-сервер знакомств: кого ищут (цель → кто ищет и когда спросил)
+    pub(crate) seekers: HashMap<PeerId, HashMap<PeerId, Instant>>,
+    /// недавно познакомил: цель → [(кто искал, когда)] — повторю с цепочкой, когда цель зарезервируется
+    pub(crate) intro_recent: HashMap<PeerId, Vec<(PeerId, Instant)>>,
+    /// когда последний раз спрашивал помощника «кого видишь»
+    pub(crate) seek_sent: HashMap<PeerId, Instant>,
+    /// у кого резерв на моём ретрансляторе
+    pub(crate) reserved: HashSet<PeerId>,
+    /// сколько раз подряд не дозвонился (для расписания попыток)
+    pub(crate) dial_n: HashMap<PeerId, u32>,
+    /// пиров в таблице DHT (поиск можно начинать, не дожидаясь полного bootstrap)
+    pub(crate) routing_n: usize,
+    /// сколько раз меня познакомили и сколько раз познакомил я
+    pub(crate) intros: (u32, u32),
+    /// режим «сервер для друзей» (из конфига при старте)
+    pub(crate) server: bool,
 }
 
 fn load_key(dir: &std::path::Path) -> Result<Keypair> {
@@ -202,7 +231,7 @@ pub fn is_public(a: &Multiaddr) -> bool {
         None => a.iter().any(|p| matches!(p, Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) | Protocol::Dnsaddr(_))),
     }
 }
-fn strip_peer(mut a: Multiaddr, p: &PeerId) -> Multiaddr {
+pub(crate) fn strip_peer(mut a: Multiaddr, p: &PeerId) -> Multiaddr {
     if let Some(Protocol::P2p(x)) = a.iter().last() {
         if x == *p {
             a.pop();
@@ -234,7 +263,10 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
     let use_mdns = opts.mdns.unwrap_or(cfg.mdns);
     let use_dht = opts.dht.unwrap_or(cfg.dht);
     let use_upnp = opts.upnp.unwrap_or(cfg.upnp) && !opts.local_only;
-    let use_relay = opts.relay_server.unwrap_or(cfg.relay_server);
+    // в локальном режиме (тесты) сервер тоже можно — просто без UPnP
+    let server = cfg.server;
+    // сервер для друзей всегда ретранслирует — в этом его смысл
+    let use_relay = opts.relay_server.unwrap_or(cfg.relay_server) || server;
     let allow: Arc<RwLock<HashSet<PeerId>>> = Default::default();
     let allow_b = allow.clone();
 
@@ -248,12 +280,14 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
             let peer = key.public().to_peer_id();
             let relay = if use_relay {
                 let mut rc = relay::Config::default();
-                rc.max_reservations = 32;
+                // сервер держит с запасом: вся компания друзей и их звонки
+                let k = if server { 4 } else { 1 };
+                rc.max_reservations = 32 * k;
                 rc.max_reservations_per_peer = 4;
-                rc.max_circuits = 32;
-                rc.max_circuits_per_peer = 8;
-                rc.max_circuit_duration = Duration::from_secs(60 * 60);
-                rc.max_circuit_bytes = 1 << 30;
+                rc.max_circuits = 32 * k;
+                rc.max_circuits_per_peer = 8 * k;
+                rc.max_circuit_duration = Duration::from_secs(60 * 60 * k as u64);
+                rc.max_circuit_bytes = (1u64 << 30) * k as u64;
                 let a1 = allow_b.clone();
                 let a2 = allow_b.clone();
                 rc.reservation_rate_limiters = vec![Box::new(move |p: PeerId, _a: &Multiaddr, _n: Instant| {
@@ -277,8 +311,8 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
             };
             let mdns = if use_mdns { Some(mdns::tokio::Behaviour::new(mdns::Config::default(), peer)?) } else { None };
             let ac = autonat::Config {
-                boot_delay: Duration::from_secs(8),
-                retry_interval: Duration::from_secs(60),
+                boot_delay: Duration::from_secs(3),
+                retry_interval: Duration::from_secs(30),
                 refresh_interval: Duration::from_secs(5 * 60),
                 only_global_ips: true,
                 ..Default::default()
@@ -380,6 +414,14 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
         started: Instant::now(),
         net_sig: String::new(),
         quit: false,
+        seekers: HashMap::new(),
+        intro_recent: HashMap::new(),
+        seek_sent: HashMap::new(),
+        reserved: HashSet::new(),
+        dial_n: HashMap::new(),
+        routing_n: 0,
+        intros: (0, 0),
+        server,
     };
     node.refresh_allow();
     tracing::info!("hunty {VERSION}: я {}", node.me);
@@ -529,8 +571,25 @@ impl Node {
             self.send(t, req.clone(), Pend::Other);
         }
     }
+    /// DHT годится для поиска, как только в таблице набралось пиров —
+    /// не жду полного bootstrap (он бывает и по полминуты).
     pub(crate) fn dht_ready(&self) -> bool {
-        self.bootstrapped && self.swarm.behaviour().kad.is_enabled()
+        self.swarm.behaviour().kad.is_enabled() && (self.bootstrapped || self.routing_n >= 16)
+    }
+    /// Пора ли снова звонить: первые попытки часто, потом реже; сервер друга — всегда часто.
+    pub(crate) fn dial_due(&self, p: &PeerId, now: Instant) -> bool {
+        let Some(t) = self.dialing.get(p) else { return true };
+        let n = self.dial_n.get(p).copied().unwrap_or(0);
+        let server = self.st.peers.get(&p.to_string()).map(|c| c.server).unwrap_or(false);
+        let secs = match n {
+            0..=3 => 3,
+            4..=6 => 6,
+            7..=9 => 12,
+            _ if server => 12,
+            10..=15 => 20,
+            _ => 30,
+        };
+        now.duration_since(*t) >= Duration::from_secs(secs)
     }
     pub(crate) fn remember(&mut self, p: &PeerId, addrs: Vec<Multiaddr>) {
         if *p == self.me || !(self.known(p) || self.hunty_peers.contains(p)) {
@@ -583,6 +642,7 @@ impl Node {
             .filter(|a| seen.insert(a.to_string()))
             .collect();
         self.dialing.insert(p, Instant::now());
+        *self.dial_n.entry(p).or_default() += 1;
         let o = DialOpts::peer_id(p)
             .condition(PeerCondition::DisconnectedAndNotDialing)
             .addresses(addrs)
@@ -602,7 +662,9 @@ impl Node {
             Lookup::Nick(n) => (format!("n:{n}"), dht_key("nick", n)),
             Lookup::Check(n) => (format!("c:{n}"), dht_key("nick", n)),
         };
-        if self.lookups.get(&k).map(|t| t.elapsed() < Duration::from_secs(45)).unwrap_or(false) {
+        // первые минуты ищу чаще — друзья как раз запускаются
+        let every = if self.started.elapsed() < Duration::from_secs(180) { 15 } else { 45 };
+        if self.lookups.get(&k).map(|t| t.elapsed() < Duration::from_secs(every)).unwrap_or(false) || self.lookup_q.len() > 48 {
             return;
         }
         self.lookups.insert(k, Instant::now());
@@ -642,6 +704,11 @@ impl Node {
     }
     pub(crate) fn went_offline(&mut self, p: PeerId) {
         self.hello_inflight.remove(&p);
+        self.reserved.remove(&p);
+        self.seek_sent.remove(&p);
+        // вдруг это просто моргнула сеть — перезвоню сразу
+        self.dial_n.remove(&p);
+        self.dialing.remove(&p);
         let ps = p.to_string();
         if self.online.remove(&p).is_some() {
             self.emit("presence", json!({ "peer": ps, "online": false }));
@@ -769,6 +836,9 @@ impl Node {
             SwarmEvent::ExternalAddrConfirmed { address } => {
                 tracing::info!("внешний адрес подтверждён: {address}");
                 self.addr_dirty = Some(Instant::now());
+                // меня теперь видно иначе — перезвоню всем, кого ещё нет, не дожидаясь расписания
+                self.dial_n.clear();
+                self.dialing.clear();
             }
             SwarmEvent::ExternalAddrExpired { .. } => {
                 self.addr_dirty = Some(Instant::now());
@@ -777,6 +847,7 @@ impl Node {
                 let addr = endpoint.get_remote_address().clone();
                 let dialer = endpoint.is_dialer();
                 self.conns.entry(peer_id).or_default().insert(connection_id, (addr.clone(), dialer));
+                self.dial_n.remove(&peer_id);
                 if self.known(&peer_id) {
                     if dialer {
                         self.remember(&peer_id, vec![addr]);
@@ -899,9 +970,16 @@ impl Node {
                 }
                 self.addr_dirty = Some(Instant::now());
             }
-            BehaviourEvent::Relay(relay::Event::ReservationReqAccepted { src_peer_id, .. }) => {
-                let n = self.nick(&src_peer_id.to_string());
-                self.log("ok", format!("держу ретранслятор для {n}"));
+            BehaviourEvent::Relay(relay::Event::ReservationReqAccepted { src_peer_id, renewed }) => {
+                if !renewed && !self.reserved.contains(&src_peer_id) {
+                    let n = self.nick(&src_peer_id.to_string());
+                    self.log("ok", format!("держу ретранслятор для {n}"));
+                }
+                self.on_reserved(src_peer_id);
+            }
+            BehaviourEvent::Relay(relay::Event::ReservationClosed { src_peer_id })
+            | BehaviourEvent::Relay(relay::Event::ReservationTimedOut { src_peer_id }) => {
+                self.reserved.remove(&src_peer_id);
             }
             BehaviourEvent::Dcutr(dcutr::Event { remote_peer_id, result }) => match result {
                 Ok(_) => {
@@ -962,6 +1040,10 @@ impl Node {
     }
 
     fn on_kad(&mut self, e: kad::Event) {
+        if let kad::Event::RoutingUpdated { is_new_peer: true, .. } = e {
+            self.routing_n += 1;
+            return;
+        }
         if let kad::Event::OutboundQueryProgressed { id, result, step, .. } = e {
             match result {
                 kad::QueryResult::Bootstrap(Ok(_)) => {
@@ -1100,12 +1182,13 @@ impl Node {
                 }
                 continue;
             }
-            let due = self.dialing.get(&p).map(|t| now.duration_since(*t) > Duration::from_secs(20)).unwrap_or(true);
-            if due {
+            if self.dial_due(&p, now) {
                 self.dial(p, &[]);
             }
             self.lookup(Lookup::Peer(p));
         }
+        // 1б. мини-сервер знакомств: переспрашиваю друзей в сети, кого не хватает
+        self.tick_intro(now);
         // 2. инвайты в ожидании
         self.try_joins(None);
         let pend: Vec<String> = self.st.rooms.values().filter(|r| r.pending).map(|r| r.id.clone()).collect();
@@ -1118,7 +1201,7 @@ impl Node {
             // первые публикации чаще: DHT капризный, адреса за NAT ещё плывут
             let every = match self.provide_n { 0..=1 => 60, 2..=3 => 300, _ => 20 * 60 };
             let stale = self.last_provide.map(|t| now.duration_since(t) > Duration::from_secs(every)).unwrap_or(true);
-            if self.bootstrapped && (settle || stale) && !self.swarm.external_addresses().next().is_none() {
+            if self.dht_ready() && (settle || stale) && self.swarm.external_addresses().next().is_some() {
                 self.last_provide = Some(now);
                 self.provide_n += 1;
                 self.addr_dirty = None;
@@ -1198,31 +1281,37 @@ impl Node {
         if self.started.elapsed() > Duration::from_secs(1800) && self.relay_bad.len() > 32 {
             self.relay_bad.clear();
         }
-        if self.nat == "public" || self.started.elapsed() < Duration::from_secs(15) || self.relays.len() >= 2 {
+        if self.nat == "public" {
             return;
         }
-        let mut cands: Vec<(PeerId, Multiaddr)> = vec![];
-        // сначала друзья с белым IP
-        for (p, o) in self.online.iter() {
-            if !o.relay || self.relays.contains_key(p) || self.relay_bad.contains(p) {
-                continue;
-            }
-            if let Some(c) = self.conns.get(p) {
-                if let Some((a, _)) = c.values().find(|(a, d)| *d && !is_circuit(a) && is_public(a)) {
-                    cands.push((*p, strip_peer(a.clone(), p)));
+        // до 2 резервов у друзей (сервер друга, белый IP) — сразу, NAT ещё не ясен, а это дёшево;
+        // и 1 у публичного IPFS-ретранслятора — чтобы достучался и незнакомый (заявка в друзья)
+        let mine = self.relays.keys().filter(|p| self.known(p)).count();
+        let public = self.relays.len() - mine;
+        let mut cands: Vec<(u8, PeerId, Multiaddr)> = vec![];
+        if mine < 2 {
+            for (p, o) in self.online.iter() {
+                if !o.relay || self.relays.contains_key(p) || self.relay_bad.contains(p) {
+                    continue;
+                }
+                if let Some(c) = self.conns.get(p) {
+                    // соединение уже есть — резерв пойдёт по нему; адрес нужен только для формы
+                    if let Some((a, _)) = c.values().filter(|(a, _)| !is_circuit(a)).max_by_key(|(a, d)| (*d && is_public(a), *d)) {
+                        cands.push((if o.server { 0 } else { 1 }, *p, strip_peer(a.clone(), p)));
+                    }
                 }
             }
+            cands.sort_by_key(|c| c.0);
+            cands.truncate(2 - mine);
         }
-        for (p, addrs) in self.relay_cands.iter() {
-            if self.relays.contains_key(p) || self.relay_bad.contains(p) {
-                continue;
-            }
-            if let Some(a) = addrs.iter().find(|a| a.iter().any(|x| matches!(x, Protocol::Tcp(_)))) {
-                cands.push((*p, strip_peer(a.clone(), p)));
+        if public < 1 && self.started.elapsed() > Duration::from_secs(6) {
+            if let Some((p, a)) = self.relay_cands.iter().filter(|(p, _)| !self.relays.contains_key(p) && !self.relay_bad.contains(p)).find_map(|(p, addrs)| {
+                addrs.iter().find(|a| a.iter().any(|x| matches!(x, Protocol::Tcp(_)))).map(|a| (*p, strip_peer(a.clone(), p)))
+            }) {
+                cands.push((2, p, a));
             }
         }
-        let room = 2 - self.relays.len();
-        for (p, a) in cands.into_iter().take(room) {
+        for (_, p, a) in cands {
             let addr = a.with(Protocol::P2p(p)).with(Protocol::P2pCircuit);
             match self.swarm.listen_on(addr) {
                 Ok(id) => {
@@ -1263,13 +1352,37 @@ impl Node {
             "mdns": self.swarm.behaviour().mdns.is_enabled(),
             "relay_server": self.swarm.behaviour().relay.is_enabled(),
             "lan": self.lan.len(),
-            "servers": 0,
+            // серверы друзей: сколько знаю и сколько сейчас в сети
+            "servers": self.online.values().filter(|o| o.server).count(),
+            "servers_known": self.st.peers.values().filter(|c| c.server).count(),
+            "server": self.server,
+            "port": self.listen_port(),
+            "reachable": self.nat == "public" || self.upnp_state == "порт проброшен",
+            "intros": { "got": self.intros.0, "made": self.intros.1, "waiting": self.seekers.values().map(|m| m.len()).sum::<usize>() },
+            "reserved": self.reserved.len(),
         })
+    }
+
+    /// Порт, который реально слушаю (его и пробрасывать на роутере).
+    pub(crate) fn listen_port(&self) -> u16 {
+        for a in self.swarm.listeners() {
+            if is_circuit(a) {
+                continue;
+            }
+            for p in a.iter() {
+                match p {
+                    Protocol::Tcp(x) | Protocol::Udp(x) => return x,
+                    _ => {}
+                }
+            }
+        }
+        self.opts.port.unwrap_or(self.st.config.port)
     }
 
     fn net_changed(&mut self) {
         let sig = format!(
-            "{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}",
+            self.online.values().filter(|o| o.server).count(),
             self.nat,
             self.upnp_state,
             self.relays.values().filter(|r| r.ok).count(),

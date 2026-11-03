@@ -438,6 +438,28 @@ fn data_dir(app: &AppHandle) -> PathBuf {
     app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("hunty-data"))
 }
 
+/// Режим «сервер для друзей» (config.json → "server": true): пока Hunty открыт, Windows не засыпает
+/// (экран гаснуть может). Флаг живёт, пока жив поток, — поэтому зовём из главного потока в setup.
+#[cfg(windows)]
+fn keep_awake(dir: &Path) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetThreadExecutionState(flags: u32) -> u32;
+    }
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+    const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+    let on = std::fs::read(dir.join("config.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("server").and_then(|x| x.as_bool()))
+        .unwrap_or(false);
+    if on {
+        unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+        }
+    }
+}
+
 fn init_log(dir: &Path) {
     use tracing_subscriber::EnvFilter;
     let _ = std::fs::create_dir_all(dir);
@@ -584,6 +606,8 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 tune_webview(&w);
             }
+            #[cfg(windows)]
+            keep_awake(&data_dir(app.handle()));
             start_core(app.handle().clone(), core.clone());
             Ok(())
         })

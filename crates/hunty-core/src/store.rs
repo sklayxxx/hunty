@@ -218,6 +218,9 @@ pub struct PeerCache {
     pub addrs: Vec<String>,
     #[serde(default)]
     pub seen: u64,
+    /// друг держит свой ПК сервером — стучусь к нему первым
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub server: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -237,6 +240,9 @@ pub struct Config {
     /// можно ли найти меня по нику через DHT
     #[serde(default = "yes")]
     pub findable: bool,
+    /// этот ПК — сервер для друзей: всегда в сети, знакомит и ретранслирует с запасом
+    #[serde(default)]
+    pub server: bool,
 }
 fn yes() -> bool {
     true
@@ -246,7 +252,7 @@ fn default_ice() -> Value {
 }
 impl Default for Config {
     fn default() -> Self {
-        Config { port: 0, mdns: true, dht: true, upnp: true, relay_server: true, ice: default_ice(), findable: true }
+        Config { port: 0, mdns: true, dht: true, upnp: true, relay_server: true, ice: default_ice(), findable: true, server: false }
     }
 }
 

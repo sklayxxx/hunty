@@ -5,12 +5,18 @@ export const R = document.documentElement;
 export const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 export const mobile = () => matchMedia('(max-width:640px)').matches;
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** сделать, когда браузер свободен (но не позже timeout мс) */
+export const idle = (f, timeout = 700) => 'requestIdleCallback' in window ? requestIdleCallback(f, { timeout }) : setTimeout(f, 50);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const pad = n => String(n).padStart(2, '0');
 export const hm = d => pad(d.getHours()) + ':' + pad(d.getMinutes());
+// Intl-форматтер создаём один раз: toLocaleString() на каждое сообщение стоил ~0.3 мс (×600 = заметный лаг)
+const FULL = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'medium' });
+export const full = ts => FULL.format(ts);
 export const MON = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 export const pick = a => a[Math.floor(Math.random() * a.length)];
-export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }, ESCRE = /[&<>"']/g;
+export const esc = s => { s = String(s ?? ''); return ESCRE.test(s) ? (ESCRE.lastIndex = 0, s.replace(ESCRE, c => ESC[c])) : s; };
 export const ic = n => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 export const short = p => (p ? '…' + String(p).slice(-6) : '');
 export function when(ts) {

@@ -5,6 +5,7 @@
 //! UI общается с ядром JSON-командами (`Handle::cmd`) и получает поток событий.
 mod api;
 pub mod codes;
+mod intro;
 mod node;
 pub mod proto;
 pub mod store;

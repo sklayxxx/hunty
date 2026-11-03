@@ -83,7 +83,7 @@
 .addr small{flex:none;width:64px;color:var(--faint);font-size:12px}
 .addr code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dim)}
 .addr .gbtn{flex:none;padding:0 8px}
-.avbig.landed,.js-oava.landed{animation:land .42s var(--spring,cubic-bezier(.3,1.6,.5,1))}
+.avbig.landed,.js-oava.landed{animation:land .42s var(--spring,cubic-bezier(.22,1,.36,1))}
 @keyframes land{0%{transform:scale(1.22)}60%{transform:scale(.94)}100%{transform:none}}
 .js-ogo:disabled{opacity:.5;cursor:not-allowed}
 
@@ -153,9 +153,9 @@
 .sharebar[hidden]{display:none}
 .sb-dot{flex:none;width:9px;height:9px;border-radius:50%;background:#ff5a6e;animation:lpulse 1.8s ease-out infinite}
 .sb-t{display:flex;align-items:baseline;gap:10px;min-width:0}
-.sb-t b{font-weight:650;font-size:14.5px;white-space:nowrap}
+.sb-t b{font-weight:600;font-size:14.5px;white-space:nowrap}
 .sb-t small{min-width:0;font-size:12.5px;color:rgba(255,228,232,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sb-stop{display:inline-flex;align-items:center;gap:7px;flex:none;height:34px;padding:0 16px;margin-left:8px;border:0;border-radius:99px;background:#fff;color:#c8203a;font-weight:650;font-size:13.5px;box-shadow:0 4px 14px -4px rgba(0,0,0,.55);transition:transform .15s var(--spring),filter .15s}
+.sb-stop{display:inline-flex;align-items:center;gap:7px;flex:none;height:34px;padding:0 16px;margin-left:8px;border:0;border-radius:99px;background:#fff;color:#c8203a;font-weight:600;font-size:13.5px;box-shadow:0 4px 14px -4px rgba(0,0,0,.55);transition:transform .15s var(--spring),filter .15s}
 .sb-stop .ic{width:16px;height:16px}
 .sb-stop:hover{filter:brightness(.94);transform:translateY(-1px)}
 .sb-stop:active{transform:scale(.97)}
@@ -329,7 +329,7 @@ body:has(.wback.on) .snack{bottom:14px}
 
 /* ---------- настройки: хранилище, блок-лист, журнал ---------- */
 .stcard{display:flex;flex-direction:column;gap:6px;margin:0 0 14px;padding:16px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
-.stcard .big{font-size:30px;font-weight:650;line-height:1.1;letter-spacing:-.01em}
+.stcard .big{font-size:30px;font-weight:600;line-height:1.1;letter-spacing:-.01em}
 .stcard small{font-size:12.5px;line-height:1.45;overflow-wrap:anywhere}
 .stcard .btnrow{margin-top:8px}
 .stlist,.blist{display:flex;flex-direction:column}

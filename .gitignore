@@ -6,3 +6,4 @@ node_modules
 /tests/shots
 /tools/denoise/target
 .work/
+/ui/tools/.fonts-src

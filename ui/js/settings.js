@@ -118,7 +118,7 @@ let rsToast = null;
 async function setCfg(patch) {
   try {
     const r = await api('config_set', patch);
-    if (r && r.config) S.config = r.config;
+    if (r && r.config) { S.config = r.config; syncCfg(); renderSrv(S.net); } // «сервер» тянет за собой ретранслятор и UPnP
     if (r && r.restart) askRestart();
   } catch (e) { fail(e); syncCfg(); }
 }
@@ -511,13 +511,27 @@ function netHero() {
   else if (dhtOk || n.lan) put('mid', 'Друзья не в сети', 'как только кто-то зайдёт — подключусь сам' + (n.nat === 'private' ? ' · ты за роутером, но это не страшно' : ''));
   else if (!dht) put('bad', 'Поиск через интернет выключен', 'друзья найдутся только по локалке — включи «Искать друзей через интернет»');
   else put('mid', 'Подключаюсь к сети…', 'обычно до минуты — потом друзья найдутся сами');
+  const srv = n.server ? 'ты сервер для друзей' : n.servers ? `серверов друзей в сети: ${n.servers}` : '';
+  if (srv) $('.js-nhs').textContent += ' · ' + srv;
+}
+/** режим «сервер для друзей»: работает ли, видно ли снаружи, какой порт открыть на роутере */
+function renderSrv(n) {
+  const box = $('.js-srvbox'); if (!box) return;
+  const want = !!(S.config && S.config.server), on = !!(n && n.server);
+  box.hidden = !want && !on; if (box.hidden) return;
+  if (want !== on) { box.dataset.st = 'mid'; box.innerHTML = `<b>${ic('rotate-ccw')}${want ? 'Включится после перезапуска Hunty' : 'Выключится после перезапуска Hunty'}</b>`; return; }
+  const it = n.intros || {}, port = esc(String(n.port || '—'));
+  box.dataset.st = n.reachable ? 'ok' : 'mid';
+  box.innerHTML = `<b>${ic(n.reachable ? 'check' : 'info')}${n.reachable ? 'Сервер работает, до тебя достучатся из интернета' : 'Сервер работает, но снаружи порт закрыт'}</b>` +
+    `<small>${n.reachable ? (n.nat === 'public' ? 'у тебя белый IP' : `роутер сам открыл порт <b class="mono">${port}</b>`) : `открой на роутере порт <b class="mono">${port}</b> (TCP и UDP) на этот комп или включи UPnP в настройках роутера. Пока порт закрыт, сервер помогает только тем, кто уже на связи`}</small>` +
+    `<small>через тебя на связи: ${n.reserved || 0} · познакомил друзей: ${it.made || 0}${it.waiting ? ' · ждут друг друга: ' + it.waiting : ''}</small>`;
 }
 function renderNet() {
-  netHero();
+  netHero(); renderSrv(S.net);
   const n = S.net; const ul = $('.js-netul'); if (!n) { ul.innerHTML = '<li>ядро не ответило</li>'; return; }
   const li = (k, v, cls = '') => `<li class="${cls}"><span>${esc(k)}</span><b>${v}</b></li>`;
   const on = n.online || [], rel = (n.relays || []).filter(r => r.ok);
-  $('.js-netcard .big').textContent = 'Серверов: ' + (n.servers || 0);
+  const it = n.intros || {};
   ul.innerHTML = [
     li('Ключ', `<span class="mono" title="${esc(n.peer)}">${esc(short(n.peer))}</span>`),
     li('NAT', esc(NAT[n.nat] || n.nat || '—'), n.nat === 'public' ? 'ok' : ''),
@@ -525,7 +539,10 @@ function renderNet() {
     li('DHT (IPFS)', n.dht && n.dht.on ? (n.dht.ready ? 'подключён' : 'подключаюсь…') : 'выключен', n.dht && n.dht.ready ? 'ok' : ''),
     li('Локалка', n.mdns ? `mDNS · рядом ${n.lan || 0}` : 'выключена'),
     li('Ретрансляторы', rel.length ? rel.map(r => esc(r.nick || short(r.peer))).join(', ') : 'не нужны'),
-    li('Помогаю со связью', n.relay_server ? 'да, друзьям' : 'нет'),
+    li('Помогаю со связью', n.server ? 'я сервер для друзей' : n.relay_server ? 'да, друзьям' : 'нет', n.server ? 'ok' : ''),
+    li('Серверы друзей', n.servers ? `в сети ${n.servers}` + (n.servers_known > n.servers ? ` из ${n.servers_known}` : '') : n.servers_known ? `знаю ${n.servers_known}, сейчас не в сети` : 'нет', n.servers ? 'ok' : ''),
+    li('Знакомства', `меня свели: ${it.got || 0} · я свёл: ${it.made || 0}`),
+    li('Порт', `<span class="mono">${esc(String(n.port || '—'))}</span> <small>TCP и UDP</small>`),
     li('Соединений', String(n.connections || 0)),
     li('В сети', on.length ? on.map(o => `${esc(o.nick || short(o.peer))} <small>${o.rtt != null ? o.rtt + 'ms · ' : ''}${esc(VIA[o.via] || o.via || '')}</small>`).join('<br>') : 'никого'),
   ].join('');
@@ -547,7 +564,7 @@ $('.js-netbtn').addEventListener('click', async () => {
 });
 
 /* ---------- о программе и обновления ---------- */
-function about() { $('.js-ver').textContent = `v${S.version || '0.4.0'} · бесплатно навсегда`; }
+function about() { $('.js-ver').textContent = `v${S.version || '0.5.0'} · бесплатно навсегда`; }
 const cmpV = (a, b) => { const p = s => String(s).replace(/^v/, '').split(/[.-]/).map(x => +x || 0); const x = p(a), y = p(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
 export async function checkUpdate(silent) {
   const st = $('.js-updst');

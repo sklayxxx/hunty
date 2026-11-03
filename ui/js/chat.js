@@ -1,5 +1,5 @@
 // Чаты: список, шапка, сообщения (ответы, реакции, правки, удаление, разметка), ввод, стикеры, файлы, «печатает…», меню
-import { $, $$, R, esc, ic, hm, when, dayLabel, size, plural, reduce, mobile, prefs, setPref, bus, short } from './core.js';
+import { $, $$, R, esc, ic, hm, full, when, dayLabel, size, plural, reduce, mobile, prefs, setPref, bus, short } from './core.js';
 import { api, openUrl, saveFile, mediaURL, saveMedia, reveal, inTauri } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, colorByNick, isOnline, shownOnline, statusOf, dmPeer, roomName, voiceCount, voiceIn, typers, pushLocal, isFriend, isBlocked } from './state.js';
 import { stkSrc, stkName, finWrap, addSticker } from './stickers.js';
@@ -251,7 +251,7 @@ function rxHTML(m) {
 const mediaOf = m => (m.data && m.data.ref ? mediaURL(m.room, m.id) : '');
 function msgEl(m) {
   const d = document.createElement('div'); d.dataset.id = m.id; d.dataset.ts = m.ts;
-  const dt0 = new Date(m.ts), t = `<time datetime="${dt0.toISOString()}" title="${esc(dt0.toLocaleString('ru-RU'))}">${hm(dt0)}</time>`;
+  const dt0 = new Date(m.ts), t = `<time datetime="${dt0.toISOString()}" title="${full(dt0)}">${hm(dt0)}</time>`;
   if (m.kind === 'sys') {
     d.className = 'm sys';
     d.innerHTML = `<span class="mav">${ic(m.text.startsWith('call') || m.text === 'missed' ? 'phone' : m.text.startsWith('pin:') ? 'pin' : 'arrow-right')}</span><div class="mb"><span class="tx">${emo(esc(sysText(m)))}</span>${t}</div>`;
@@ -272,7 +272,7 @@ function msgEl(m) {
   } else if (m.kind === 'file') body = `<button class="file" type="button" data-file="${esc(m.id)}" title="Сохранить"><span class="fic">${ic('file')}</span><span class="fnm"><b>${esc(dt.name || 'файл')}</b><small>${esc(size(dt.size || 0))}</small></span>${ic('download')}</button>` + (m.text ? `<span class="cap">${fmt(m.text)}</span>` : '');
   else body = (n = emojiOnly(m.text)) ? `<span class="jumbo">${emo(esc(String(m.text).trim()))}</span>` : fmt(m.text || '') + linkCards(m.text);
   const rp = m.rp ? `<button type="button" class="rq" data-jump="${esc(m.rp.id)}" title="К сообщению">${m.rp.gone ? `${ic('reply')}<i>сообщение удалено</i>` : `<img class="ava" alt="" src="${avaOf(m.rp.from)}"><b style="--c:${colorOf(m.rp.from)}">${esc(nickOf(m.rp.from))}</b><span>${emo(esc(rpText(m.rp)))}</span>`}</button>` : '';
-  const ed = m.edited ? `<small class="ed" title="изменено ${esc(new Date(m.edited).toLocaleString('ru-RU'))}">(изм.)</small>` : '';
+  const ed = m.edited ? `<small class="ed" title="изменено ${full(m.edited)}">(изм.)</small>` : '';
   const fw = !dt.fwd ? '' : isSelf(m.room) && dt.fwd.n ? `<span class="fwd sv">${ic('bookmark')}<b>${esc(dt.fwd.n)}</b>${dt.fwd.room && dt.fwd.room !== m.room && S.rooms.has(dt.fwd.room) ? ' · ' + esc(roomName(dt.fwd.room)) : ''}${dt.fwd.ts ? ' · ' + esc(when(dt.fwd.ts)) : ''}</span>`
     : `<span class="fwd">${ic('forward')}переслано${dt.fwd.n ? ` от <b>${esc(dt.fwd.n)}</b>` : ''}</span>`;
   d.innerHTML = `${rp}<span class="mav" data-u="${esc(u)}"${me ? ' data-me="1"' : ''}><img class="ava" alt="" src="${avaOf(u)}" draggable="false"></span><time class="ct" aria-hidden="true">${hm(dt0)}</time><div class="mb"><div class="mh"><span class="who" data-u="${esc(u)}"${me ? ' data-me="1"' : ''}>${esc(nickOf(u))}</span>${t}</div><div class="tx">${fw}${body}${ed}${fxChip(m)}</div>${rxHTML(m)}</div>`;
@@ -349,6 +349,28 @@ function renderLog(room, keep) {
   l.replaceChildren(f);
   if (keep === 'top') l.scrollTop = l.scrollHeight - was; else toBottom(l);
 }
+/** подгруженную историю дописываем сверху кусочком, а не перерисовываем всю ленту (на 600+ сообщениях это был лаг) */
+function prependOld(room, old) {
+  const r = S.rooms.get(room), l = logOf(room), list = old.filter(m => shown(room, m)), rt = r ? r.read_ts || 0 : 0;
+  // разделитель «новые» должен переехать в подгруженное — тут проще честно перерисовать
+  if (r && r._openUnread && list.some(m => m.ts > rt && m.from !== myId() && m.kind !== 'sys')) { renderLog(room, 'top'); return; }
+  const was = l.scrollHeight - l.scrollTop, f = document.createDocumentFragment();
+  const mo = l.firstElementChild; if (mo && mo.classList.contains('motd')) mo.remove();
+  if (r && S.full.has(room)) f.appendChild(motd(r));
+  let day = '', prev = null;
+  for (const m of list) {
+    const dd = new Date(m.ts).toDateString(); let brk = false;
+    if (dd !== day) { day = dd; f.appendChild(daySep(m.ts)); brk = true; }
+    const e = msgEl(m); if (!brk && contOf(prev, m)) e.classList.add('cont');
+    f.appendChild(e); prev = m;
+  }
+  const first = l.firstElementChild; // старая лента начинается с разделителя дня — тот же день не дублируем
+  if (prev && first && first.classList.contains('dsep') && first.dataset.day === day) {
+    const nx = first.nextElementSibling; first.remove(); l.prepend(f);
+    if (nx && nx.classList.contains('m') && !nx.classList.contains('hasrp')) grp(nx);
+  } else l.prepend(f);
+  l.scrollTop = l.scrollHeight - was;
+}
 function lastMsgEl(l) { for (let e = l.lastElementChild; e; e = e.previousElementSibling) if (e.classList.contains('m')) return e; return null; }
 function appendMsg(room, m) {
   const l = logs.get(room); if (!l || !shown(room, m)) return;
@@ -378,7 +400,7 @@ async function loadOlder(room) {
     const old = (res.msgs || []).filter(m => !arr.some(x => x.id === m.id));
     if (!old.length || res.msgs.length < 80) S.full.add(room);
     arr.unshift(...old);
-    if (old.length) renderLog(room, 'top');
+    if (old.length) prependOld(room, old);
   } catch (e) { console.warn(e); }
   loading.delete(room);
 }
