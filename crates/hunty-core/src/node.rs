@@ -356,6 +356,15 @@ pub async fn spawn(dir: PathBuf, opts: Opts) -> Result<(mpsc::UnboundedSender<Cm
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(75)))
         .build();
 
+    // libp2p-relay 0.22: когда меняется статус сервера-ретранслятора (появился или пропал внешний адрес —
+    // например, свой же адрес через чужой ретранслятор), он шлёт SetStatus во ВСЕ соединения, включая
+    // идущие через ретранслятор (у них обработчик-заглушка) → паника в either.rs, и это соединение рвётся:
+    // друг, подключённый через ретранслятор, на секунду «выпадает» из сети. Фиксирую статус сразу, пока
+    // соединений нет, — дальше он не меняется. Чужих всё равно не пускают лимиты (только друзья и участники).
+    if let Some(r) = swarm.behaviour_mut().relay.as_mut() {
+        r.set_status(Some(relay::Status::Enable));
+    }
+
     let port = opts.port.unwrap_or(cfg.port);
     let hosts: &[&str] = if opts.local_only { &["/ip4/127.0.0.1"] } else { &["/ip4/0.0.0.0", "/ip6/::"] };
     for h in hosts {
@@ -586,7 +595,8 @@ impl Node {
     /// DHT годится для поиска, как только в таблице набралось пиров —
     /// не жду полного bootstrap (он бывает и по полминуты).
     pub(crate) fn dht_ready(&self) -> bool {
-        self.swarm.behaviour().kad.is_enabled() && (self.bootstrapped || self.routing_n >= 16)
+        // искать можно, как только в таблице есть с десяток узлов, — полный bootstrap идёт до минуты
+        self.swarm.behaviour().kad.is_enabled() && (self.bootstrapped || self.routing_n >= 8)
     }
     /// Пора ли снова звонить: первые попытки часто, потом реже.
     /// Хаб (друг с белым IP / UPnP или сервер) — каждые 5 секунд первые полчаса, потом раз в 15:
@@ -667,6 +677,30 @@ impl Node {
             .build();
         if let Err(e) = self.swarm.dial(o) {
             tracing::debug!("dial {p}: {e}");
+        }
+    }
+    /// DHT нашёл пира: адреса из ответа DHT живут, пока идёт поиск, — звоню по ним сразу и параллельно
+    /// с возможным зависшим звонком по устаревшему кешу (тот может висеть до 10 с).
+    pub(crate) fn dial_dht(&mut self, p: PeerId) {
+        if p == self.me || self.connected(&p) {
+            return;
+        }
+        self.dialing.insert(p, Instant::now());
+        let o = DialOpts::peer_id(p).condition(PeerCondition::Disconnected).build(); // без своих адресов — берутся из DHT
+        if let Err(e) = self.swarm.dial(o) {
+            tracing::debug!("dial dht {p}: {e}");
+        }
+    }
+    /// Кого из своих нет в сети — ищу в DHT (и инвайты в ожидании).
+    pub(crate) fn lookup_missing(&mut self) {
+        for p in self.wanted() {
+            if !self.connected(&p) {
+                self.lookup(Lookup::Peer(p));
+            }
+        }
+        let pend: Vec<String> = self.st.rooms.values().filter(|r| r.pending).map(|r| r.id.clone()).collect();
+        for r in pend {
+            self.lookup(Lookup::Room(r));
         }
     }
     pub(crate) fn lookup(&mut self, l: Lookup) {
@@ -987,7 +1021,9 @@ impl Node {
                 if !renewal {
                     tracing::info!("резерв на ретрансляторе {relay_peer_id}");
                     // публичный ретранслятор — запомню: в следующий раз резервируюсь у него первым
-                    if let Some(a) = keep.filter(|_| !self.known(&relay_peer_id)) {
+                    // (только первый подтвердивший: второй, пробовавшийся параллельно, порядок не меняет)
+                    let other_ok = self.relays.iter().any(|(p, r)| *p != relay_peer_id && r.ok && !self.known(p));
+                    if let Some(a) = keep.filter(|_| !self.known(&relay_peer_id) && !other_ok) {
                         let full = a.with(Protocol::P2p(relay_peer_id)).to_string();
                         if self.st.relays.first() != Some(&full) {
                             let ps = relay_peer_id.to_string();
@@ -1080,6 +1116,7 @@ impl Node {
                     if !self.bootstrapped {
                         self.bootstrapped = true;
                         self.log("ok", "DHT: подключился к публичной сети IPFS");
+                        self.lookup_missing();
                         // регистрировался без сети — проверю, не занял ли кто мой ник раньше
                         if let Some(n) = self.st.profile.as_ref().map(|p| p.nick.clone()) {
                             self.start_check(&n, true);
@@ -1093,7 +1130,7 @@ impl Node {
                             Lookup::Peer(t) => {
                                 if providers.contains(&t) && !self.connected(&t) {
                                     tracing::info!("DHT нашёл {t}");
-                                    self.dial(t, &[]);
+                                    self.dial_dht(t);
                                 }
                             }
                             Lookup::Nick(n) => {
@@ -1349,10 +1386,14 @@ impl Node {
             cands.sort_by_key(|c| c.0);
             cands.truncate(2 - mine);
         }
-        // публичный: «живой» — уже подтвердил резерв или ждём его меньше 12 с (иначе параллельно пробую следующий)
+        // публичный: «живой» — уже подтвердил резерв или ждём его меньше 12 с (иначе параллельно пробую следующий).
+        // Пока ни один не подтвердил — пробую два сразу: публичные IPFS-узлы часто отказывают, а по одному
+        // в 12 с резерв (и с ним адрес, по которому меня находят из другого города) мог появиться только через минуту.
+        let public_ok = self.relays.iter().any(|(p, r)| !self.known(p) && r.ok);
         let public_live = self.relays.iter().filter(|(p, r)| !self.known(p) && (r.ok || r.at.elapsed() < Duration::from_secs(12))).count();
         let _ = public;
-        if public_live < 1 {
+        if !public_ok && public_live < 2 {
+            let mut want = 2 - public_live;
             // сначала тот, где резервировался в прошлый раз (адрес через него у друзей в кеше), — сразу, без DHT
             let sticky = self.st.relays.iter().filter_map(|a| a.parse::<Multiaddr>().ok()).find_map(|a| {
                 let p = relay_of(&a.clone().with(Protocol::P2pCircuit))?;
@@ -1360,10 +1401,18 @@ impl Node {
             });
             if let Some((p, a)) = sticky {
                 cands.push((2, p, a));
-            } else if self.started.elapsed() > Duration::from_secs(6) {
-                if let Some((p, a)) = self.relay_cands.iter().filter(|(p, _)| !self.relays.contains_key(p) && !self.relay_bad.contains(p)).find_map(|(p, addrs)| {
-                    addrs.iter().find(|a| a.iter().any(|x| matches!(x, Protocol::Tcp(_)))).map(|a| (*p, strip_peer(a.clone(), p)))
-                }) {
+                want -= 1;
+            }
+            if want > 0 && self.started.elapsed() > Duration::from_secs(3) {
+                let taken: HashSet<PeerId> = cands.iter().map(|c| c.1).collect();
+                let more: Vec<(PeerId, Multiaddr)> = self
+                    .relay_cands
+                    .iter()
+                    .filter(|(p, _)| !self.relays.contains_key(p) && !self.relay_bad.contains(p) && !taken.contains(p))
+                    .filter_map(|(p, addrs)| addrs.iter().find(|a| a.iter().any(|x| matches!(x, Protocol::Tcp(_)))).map(|a| (*p, strip_peer(a.clone(), p))))
+                    .take(want)
+                    .collect();
+                for (p, a) in more {
                     cands.push((2, p, a));
                 }
             }

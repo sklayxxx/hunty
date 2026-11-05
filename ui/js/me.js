@@ -1,5 +1,5 @@
-// Панель «я» внизу слева (как в Discord): статус, мик и звук с меню устройств, избранное, настройки;
-// счётчик «друзья в сети» сверху слева; авто-«отошёл» после 10 минут без активности.
+// Панель «я» под списком друзей (как в Discord): статус, мик и звук с меню устройств, избранное, настройки;
+// счётчик «друзья в сети» — в блоке бренда над списком; авто-«отошёл» после 10 минут без активности.
 import { $, $$, esc, ic, prefs, setPref, bus, plural } from './core.js';
 import { api } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, statusOf, shownOnline } from './state.js';
@@ -7,8 +7,9 @@ import { tmsg, tone, openW, fail, copyText } from './ui.js';
 import { openMenu } from './menu.js';
 import { V, toggleMic, toggleDeaf } from './voice.js';
 import { FX, fxName } from './audio.js';
-import { setTab, openSelf } from './chat.js';
+import { openSelf, lineOf } from './chat.js';
 import { bump } from './motion.js';
+import { keyLabel, keyOf } from './keyname.js';
 
 export const STATUS = {
   '': { label: 'В сети', sub: '', cls: 'on' },
@@ -117,12 +118,14 @@ export function renderPanel() {
   meBtn.title = 'Статус: ' + (STATUS[st] || STATUS['']).label.toLowerCase() + ' · клик — сменить';
   const mOn = V.mic && !V.deaf;
   micB.innerHTML = ic(mOn ? 'mic' : 'mic-off'); micB.classList.toggle('off', !mOn); micB.setAttribute('aria-pressed', String(mOn));
-  micB.title = (mOn ? 'Выключить мик' : 'Включить мик') + ' · Ctrl+M' + (prefs.fx ? ' · эффект «' + fxName(prefs.fx) + '»' : '');
+  // клавиши — те, что назначены в «Хоткеях», а не зашитые Ctrl+M / Ctrl+D
+  const kk = id => { const c = keyOf(id); return c ? ' · ' + keyLabel(c) : ''; };
+  micB.title = (mOn ? 'Выключить мик' : 'Включить мик') + kk('mic') + (prefs.fx ? ' · эффект «' + fxName(prefs.fx) + '»' : '');
   micB.classList.toggle('fx', !!prefs.fx);
   deafB.innerHTML = ic(V.deaf ? 'headphone-off' : 'headphones'); deafB.classList.toggle('off', V.deaf); deafB.setAttribute('aria-pressed', String(!V.deaf));
-  deafB.title = (V.deaf ? 'Включить звук' : 'Выключить звук') + ' · Ctrl+D';
+  deafB.title = (V.deaf ? 'Включить звук' : 'Выключить звук') + kk('deaf');
 }
-bus.on('me', renderPanel); bus.on('selfstate', renderPanel); bus.on('voice', renderPanel); bus.on('pref', k => { if (k === 'fx') renderPanel(); });
+bus.on('me', renderPanel); bus.on('selfstate', renderPanel); bus.on('voice', renderPanel); bus.on('pref', k => { if (k === 'fx' || k === 'keys') renderPanel(); });
 
 /* ---------- сверху слева: зелёная точка и «в сети 1/4» ---------- */
 const onl = $('.js-onl');
@@ -140,6 +143,18 @@ export function renderOnline() {
   onl.setAttribute('aria-label', onl.title);
   if (prev && prev !== n.textContent && prev !== '…') bump(n, 1.25);
 }
-onl.addEventListener('click', () => { setTab('friends'); bump(onl, 1.06); });
+// клик по «в сети 2/5» — кто в сети, клик по другу — личка с ним
+onl.addEventListener('click', () => {
+  bump(onl, 1.06);
+  const fr = [...S.friends.values()].filter(f => f.state === 'friend'), on = fr.filter(f => shownOnline(f.peer)).sort((a, b) => nickOf(a.peer).localeCompare(nickOf(b.peer)));
+  openMenu([
+    { head: fr.length ? `В сети · ${on.length} из ${fr.length}` : 'Друзей пока нет', sub: on.length ? 'клик — открыть личку' : fr.length ? 'как кто-то зайдёт — появится тут' : 'добавь по нику или скинь свой код' },
+    '-',
+    ...on.slice(0, 12).map(f => ({ img: avaOf(f.peer), label: nickOf(f.peer), sub: lineOf(f.peer), fn: () => bus.emit('dm', f.peer) })),
+    on.length > 12 ? { label: `и ещё ${on.length - 12} — в списке друзей`, disabled: true } : null,
+    '-',
+    { icon: 'user-round-plus', label: 'Добавить друга', fn: () => openW('friend') },
+  ], { el: onl });
+});
 ['presence', 'net', 'friend', 'friend_removed', 'link', 'profile', 'me'].forEach(e => bus.on(e, () => setTimeout(renderOnline)));
 setInterval(renderOnline, 15000);

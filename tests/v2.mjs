@@ -42,7 +42,7 @@ const shot = (p, n) => p.screenshot({ path: SHOTS + 'v2-' + n + '.png' }).catch(
 const A = await page('A', 'http://127.0.0.1:8471/?ws=7471&noboot');
 const B = await page('B', 'http://127.0.0.1:8472/?ws=7472&noboot');
 await sleep(1800);
-const openChat = async (P, name) => { await P.click('.stab[data-tab="chats"]'); await P.locator('.js-chats .ci').filter({ has: P.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
+const openChat = async (P, name) => { await P.locator('.js-chats .ci').filter({ has: P.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
 const log = P => P.locator('.log:not([hidden])');
 const msg = (P, text) => log(P).locator('.m[data-id]').filter({ hasText: text }).last();
 const menuItem = (P, label) => P.locator('.cmenu.on .mi', { hasText: label }).first();
@@ -93,8 +93,8 @@ try {
   ok(await menuItem(A, 'Вставить').isVisible() && await menuItem(A, 'Выделить всё').isVisible(), 'своё меню у поля ввода');
   await A.keyboard.press('Escape'); await A.fill('.js-input', '');
   // меню человека: громкость, заглушить
-  await A.click('.stab[data-tab="friends"]'); await sleep(400);
-  await A.locator('.js-friends [data-prof]').first().click({ button: 'right' }); await A.waitForSelector('.cmenu.on'); await sleep(200);
+  await openChat(A, 'vasyan');
+  await A.locator('.js-chead [data-prof]').first().click({ button: 'right' }); await A.waitForSelector('.cmenu.on'); await sleep(200);
   await shot(A, '5-person-menu');
   ok(await A.locator('.cmenu.on .mrng input[type=range]').count() === 1, 'громкость 0–200% в меню человека');
   await A.locator('.cmenu.on .mrng input').fill('150'); await sleep(100);
@@ -105,7 +105,7 @@ try {
   ok(await A.locator('.tip.on').isVisible() && (await A.textContent('.tip')).includes('Настройки'), 'своя подсказка при наведении');
   await shot(A, '5b-tip'); await A.mouse.move(700, 400);
   // блок
-  await A.locator('.js-friends [data-prof]').first().click({ button: 'right' }); await A.waitForSelector('.cmenu.on');
+  await A.locator('.js-chead [data-prof]').first().click({ button: 'right' }); await A.waitForSelector('.cmenu.on');
   await menuItem(A, 'Заблокировать').click(); await A.waitForSelector('.askb.on'); await A.click('.js-askok'); await sleep(800);
   await openChat(A, 'vasyan');
   ok(await A.locator('.js-cbar.cbk').isVisible(), 'в чате с заблокированным — плашка «Разблокировать»');

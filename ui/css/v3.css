@@ -85,9 +85,12 @@ html.haswall .pane.glass{-webkit-backdrop-filter:blur(30px) saturate(175%) brigh
 @keyframes onlp{0%{transform:scale(1);opacity:.7}70%,100%{transform:scale(2.6);opacity:0}}
 
 /* ---------- вкладки ---------- */
-.nav{gap:3px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;scroll-padding:0 6px}
-.nav::-webkit-scrollbar{display:none}
-.nav .ws[data-chat]{position:relative;flex:none;max-width:210px;min-width:0;height:40px;min-height:40px;padding:0 8px 0 6px;gap:8px;border-radius:13px;color:var(--dim);font:550 13.5px/1 var(--sans);user-select:none;-webkit-user-select:none;touch-action:pan-x}
+.nav{gap:6px;overflow:hidden}
+/* вкладки крутятся внутри .navs, а «Зайти» справа — снаружи: сколько вкладок ни открой и как окно ни сужай, кнопка голоса на месте */
+.navs{display:flex;align-items:center;gap:3px;flex:1 1 auto;min-width:0;height:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;scroll-padding:0 6px}
+.navs::-webkit-scrollbar{display:none}
+.nav>.vjoin{flex:none;margin-left:0}
+.nav .ws[data-chat]{position:relative;flex:0 1 auto;max-width:210px;min-width:118px;height:40px;min-height:40px;padding:0 8px 0 6px;gap:8px;border-radius:13px;color:var(--dim);font:550 13.5px/1 var(--sans);user-select:none;-webkit-user-select:none;touch-action:pan-x}
 .nav .ws[data-chat]:hover{background:rgba(255,255,255,.065);color:var(--ink)}
 .nav .ws[aria-current="page"]{color:var(--ink);background:linear-gradient(180deg,rgba(255,255,255,.15),rgba(255,255,255,.05));border-color:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 6px 16px -8px rgba(0,0,0,.9)}
 .ws .wav{position:relative;flex:none;width:24px;height:24px}
@@ -102,7 +105,7 @@ html.haswall .pane.glass{-webkit-backdrop-filter:blur(30px) saturate(175%) brigh
 .ws:hover .tx,.ws[aria-current="page"] .tx{opacity:1;transform:none}
 .ws .tx:hover{background:rgba(255,255,255,.14);color:var(--ink)}
 .ws .wub+.tx{margin-left:-2px}
-.nav .ws.pinned{width:44px;padding:0;justify-content:center}
+.nav .ws.pinned{flex:none;width:44px;min-width:0;padding:0;justify-content:center}
 .nav .ws.pinned .wn,.nav .ws.pinned .wvc{display:none}
 .nav .ws.pinned .wav{width:26px;height:26px}
 .nav .ws.pinned .wav .ava,.nav .ws.pinned .wav .tile{width:26px;height:26px}

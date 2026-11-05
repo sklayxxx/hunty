@@ -50,8 +50,8 @@
 <link rel="modulepreload" href="js/tabs.js">
 <link rel="modulepreload" href="js/motion.js">
 <link rel="modulepreload" href="js/hof.js">
-<link rel="modulepreload" href="js/fxdef.js">
 <link rel="modulepreload" href="js/people.js">
+<link rel="modulepreload" href="js/fxdef.js">
 <link rel="modulepreload" href="js/vendor/qrcode.js">
 <link rel="modulepreload" href="js/audio.js">
 <link rel="modulepreload" href="js/keyname.js">
@@ -71,31 +71,24 @@
     <div class="island glass lq brand">
       <button class="logo js-logo" type="button" aria-label="Hunty"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 1.6v4.6M12 17.8v4.6M1.6 12h4.6M17.8 12h4.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></svg><span class="wm">Hunty</span></button>
       <button class="onl js-onl" type="button" title="Друзья в сети"><span class="onl-av js-onlav" aria-hidden="true"></span><i class="pd on js-onld" aria-hidden="true"></i><b class="js-onln">…</b></button>
-    </div>
-    <nav class="island glass lq nav js-nav" aria-label="Открытые чаты">
-      <button class="ws plus" data-win="group" title="Создать группу" aria-label="Создать группу"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></button>
-      <button class="vjoin js-vjoin" type="button" hidden></button>
-    </nav>
-    <div class="island glass lq fame">
       <button class="hallb js-hallb" type="button" title="Зал славы · лучшие моменты" aria-label="Зал славы"><svg class="ic" aria-hidden="true"><use href="#i-trophy"/></svg><span class="hb-n js-halln" hidden>0</span></button>
     </div>
+    <nav class="island glass lq nav js-nav" aria-label="Открытые чаты">
+      <div class="navs js-navs"><button class="ws plus" data-win="group" title="Создать группу" aria-label="Создать группу"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></button></div>
+      <button class="vjoin js-vjoin" type="button" hidden></button>
+    </nav>
   </header>
 
   <div class="sharebar js-sharebar" role="status" hidden><span class="sb-dot" aria-hidden="true"></span><span class="sb-t"><b>Ты показываешь экран</b><small class="js-sbsub">видят все в голосе</small></span><button class="sb-stop js-sbstop" type="button" title="Остановить показ · Ctrl+Shift+S"><svg class="ic" aria-hidden="true"><use href="#i-monitor-off"/></svg>Остановить</button></div>
 
   <main class="tiles">
-    <section class="pane glass list" aria-label="Чаты и друзья">
-      <header class="ph" role="tablist">
-        <button class="stab" role="tab" data-tab="chats" aria-selected="true">Чаты</button>
-        <button class="stab" role="tab" data-tab="friends" aria-selected="false">Друзья<span class="n js-reqn" hidden>0</span></button>
-      </header>
+    <section class="pane glass list" aria-label="Друзья и чаты">
       <div class="sbar">
-        <label class="search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input class="js-search" placeholder="Поиск" autocomplete="off" spellcheck="false" aria-label="Поиск"></label>
-        <button class="ib" data-win="friend" title="Добавить друга" aria-label="Добавить друга"><svg class="ic" aria-hidden="true"><use href="#i-user-round-plus"/></svg></button>
+        <label class="search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input class="js-search" placeholder="Поиск" autocomplete="off" spellcheck="false" aria-label="Поиск друзей и чатов"></label>
+        <button class="ib" data-win="friend" title="Добавить друга" aria-label="Добавить друга"><svg class="ic" aria-hidden="true"><use href="#i-user-round-plus"/></svg><span class="n js-reqn" hidden>0</span></button>
         <button class="ib" data-win="group" title="Создать группу" aria-label="Создать группу"><svg class="ic" aria-hidden="true"><use href="#i-users"/></svg></button>
       </div>
-      <div class="clist js-chats" role="list"></div>
-      <div class="clist js-friends" role="list" hidden></div>
+      <div class="clist js-chats" role="list" aria-label="Друзья и чаты"></div>
       <footer class="me js-me">
         <button class="mebtn js-mebtn" type="button" title="Статус и профиль" aria-haspopup="menu">
           <span class="avw"><img class="ava js-meava" alt=""><i class="pd on js-mepd" aria-hidden="true"></i></span>
@@ -169,7 +162,7 @@
       <div class="stb js-stb">
         <div class="screen js-screen" data-tool="none" hidden>
           <video class="dvid js-dvid" autoplay playsinline muted></video>
-          <div class="scap"><span class="live js-dlive"><i></i>Live</span><span class="js-dmeta"></span><span class="dtag js-dtag" hidden><svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>можно рисовать</span><span class="dsw js-dsw"></span><button class="sq js-dq" type="button" title="Качество показа — поменять на лету" hidden><svg class="ic" aria-hidden="true"><use href="#i-gauge"/></svg><span></span></button></div>
+          <div class="scap"><span class="live js-dlive"><i></i>Live</span><span class="js-dmeta"></span><span class="dtag js-dtag" hidden><svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>можно рисовать</span><span class="dsw js-dsw"></span><button class="sq js-dq" type="button" title="Качество показа — поменять на лету" hidden><svg class="ic" aria-hidden="true"><use href="#i-gauge"/></svg><span></span></button><button class="sq js-dhide" type="button" title="Не смотреть — демка встанет на паузу и не будет тратить интернет и проц" aria-label="Не смотреть демку" hidden><svg class="ic" aria-hidden="true"><use href="#i-eye-off"/></svg><span>Не смотреть</span></button></div>
           <canvas class="ink js-ink"></canvas>
           <div class="pins js-pins"></div>
           <div class="tools js-tools" role="toolbar" aria-label="Указка и карандаш" hidden>
@@ -180,6 +173,7 @@
             <button class="tl js-dfull" title="На весь экран"><svg class="ic" aria-hidden="true"><use href="#i-maximize-2"/></svg></button>
           </div>
           <div class="thint js-thint" hidden>клик — метка, её видят все</div>
+          <div class="spause js-spause" hidden><svg class="ic" aria-hidden="true"><use href="#i-eye-off"/></svg><b class="js-spwho"></b><span>демка на паузе — не тратит интернет и проц</span><button class="cbtn sm js-spgo" type="button"><svg class="ic" aria-hidden="true"><use href="#i-eye"/></svg>Смотреть</button></div>
         </div>
         <div class="vt js-vt" role="list" aria-label="Участники звонка"></div>
         <div class="floaters js-floaters" aria-hidden="true"></div>
@@ -335,7 +329,7 @@
           <div class="row"><div class="lab"><b>Звук с компа</b><small>друзья слышат игру или видос</small></div><input class="tg" type="checkbox" data-pref="shareAudio" aria-label="Звук с компа"></div>
           <div class="row"><div class="lab"><b>Рисовать на моей демке</b><small>указка и карандаш</small></div><span class="selw"><select class="inp" data-pref="shareDraw" aria-label="Кто рисует"><option value="all">все в звонке</option><option value="none">никто</option></select></span></div>
           <div class="row"><div class="lab"><b>Метки исчезают через</b></div><div class="seg" data-pref="pinTtl"><button data-v="5">5 сек</button><button data-v="10">10 сек</button><button data-v="0">Никогда</button></div></div>
-          <div class="row"><div class="lab"><b>Режим</b><small>что предлагать в окне выбора</small></div><div class="seg" data-pref="shareHint"><button data-v="detail">Чёткость текста</button><button data-v="motion">Плавность</button></div></div>
+          <div class="row"><div class="lab"><b>Режим</b><small>текст и код — чёткость, игры и видео — плавность · при 60 fps всегда плавность</small></div><div class="seg" data-pref="shareHint"><button data-v="detail">Чёткость текста</button><button data-v="motion">Плавность</button></div></div>
           <h3>Клипы</h3>
           <div class="row"><div class="lab"><b>Писать последние секунды звонка</b><small>хранится только в памяти, пока не нажмёшь «клип» · <span class="js-clipk">F8</span></small></div><input class="tg" type="checkbox" data-pref="clips" aria-label="Клипы"></div>
           <div class="row"><div class="lab"><b>Длина клипа</b><small>с демкой — видео, без неё — только звук</small></div><div class="seg" data-pref="clipSec"><button data-v="15">15 сек</button><button data-v="30">30 сек</button><button data-v="60">60 сек</button></div></div>
@@ -361,14 +355,16 @@
           <div class="row"><div class="lab"><b>Эффекты сообщений</b><small>конфетти, бум, деньги, тряска · правый клик по «Отправить»</small></div><input class="tg" type="checkbox" data-pref="fxMsg" aria-label="Эффекты сообщений"></div>
           <h3>Обои <small class="dim">лежат под стеклом и красиво размываются</small></h3>
           <div class="walls js-walls" role="radiogroup" aria-label="Обои"></div>
-          <div class="row js-wallrow"><div class="lab"><b>Размытие</b></div><div class="rgw"><input type="range" class="rg" min="0" max="60" data-pref="wallBlur" data-unit=" px" aria-label="Размытие обоев"><span class="rgv">24 px</span></div></div>
+          <div class="row js-wallrow js-wallblur"><div class="lab"><b>Размытие картинки</b><small>сама картинка: между панелями и сквозь стекло</small></div><div class="rgw"><input type="range" class="rg" min="0" max="60" data-pref="wallBlur" data-unit=" px" aria-label="Размытие картинки"><span class="rgv">24 px</span></div></div>
           <div class="row js-wallrow"><div class="lab"><b>Затемнение</b><small>чтобы текст читался на любой картинке</small></div><div class="rgw"><input type="range" class="rg" min="0" max="90" data-pref="wallDim" aria-label="Затемнение обоев"><span class="rgv">55%</span></div></div>
           <div class="row js-liverow"><div class="lab"><b>Живой фон</b><small>пятна медленно плавают · грузит видеокарту</small></div><input class="tg" type="checkbox" data-pref="liveBg" aria-label="Живой фон"></div>
           <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="js-wallfile" hidden>
-          <h3>Стекло</h3>
-          <div class="row"><div class="lab"><b>Тип стекла</b><small>жидкое преломляет то, что под ним, как в iOS</small></div><div class="seg js-glassmode"><button data-g="liquid">Жидкое</button><button data-g="matte">Матовое</button></div></div>
-          <div class="row"><div class="lab"><b>Прозрачность стекла</b><small>сколько обоев видно сквозь панели</small></div><div class="rgw"><input type="range" class="rg js-glassa" min="0" max="100" data-pref="glassA" aria-label="Прозрачность"><span class="rgv">60%</span></div></div>
+          <h3>Стекло <small class="dim js-glnote" hidden>в лёгком режиме стекла нет — панели сплошные</small></h3>
+          <div class="row js-glrow"><div class="lab"><b>Тип стекла</b><small>жидкое преломляет края, как в iOS · заметно на обоях-картинке</small></div><div class="seg js-glassmode"><button data-g="liquid">Жидкое</button><button data-g="matte">Матовое</button></div></div>
+          <div class="row js-glrow"><div class="lab"><b>Прозрачность стекла</b><small>сколько фона видно сквозь панели, окна и меню</small></div><div class="rgw"><input type="range" class="rg js-glassa" min="0" max="100" data-pref="glassA" aria-label="Прозрачность стекла"><span class="rgv">60%</span></div></div>
+          <div class="row js-glrow"><div class="lab"><b>Матовость</b><small>насколько размыто то, что под стеклом · 0 — чистое, как витрина</small></div><div class="rgw"><input type="range" class="rg" min="0" max="100" data-pref="glassBlur" aria-label="Матовость стекла"><span class="rgv">50%</span></div></div>
           <div class="row"><div class="lab"><b>Масштаб</b></div><div class="rgw"><input type="range" class="rg" min="80" max="130" step="5" data-pref="scale" aria-label="Масштаб"><span class="rgv">100%</span></div></div>
+          <div class="row"><div class="lab"><b>Список друзей</b><small>с какой стороны окна · чат и вкладки — с другой</small></div><div class="seg" data-pref="side"><button data-v="right">Справа</button><button data-v="left">Слева</button></div></div>
           <div class="row"><div class="lab"><b>Лёгкий режим</b><small>без стекла, размытия и анимаций — для слабых компов и ноутов на батарее</small></div><input class="tg" type="checkbox" data-pref="lite" aria-label="Лёгкий режим"></div>
           <div class="row"><div class="lab"><b>Загрузочный экран</b><small>короткий лог при запуске</small></div><input class="tg" type="checkbox" data-pref="boot" aria-label="Загрузочный экран"></div>
           <h3>AFK-мобы</h3>
@@ -385,11 +381,11 @@
           <div class="row"><div class="lab"><b>Громкость уведомлений</b></div><div class="rgw"><input type="range" class="rg" min="0" max="100" data-pref="notifVol" aria-label="Громкость уведомлений"><span class="rgv">70%</span></div></div>
           <div class="sec">Какие звуки играть</div>
           <div class="sfxl js-sfxcats"></div>
-          <div class="row"><div class="lab"><b>Не беспокоить</b><small>то же, что статус внизу слева · звонки всё равно слышно</small></div><div class="seg js-dnd"><button data-v="0">Выкл</button><button data-v="60">1 час</button><button data-v="480">8 часов</button><button data-v="-1">Пока не выключу</button></div></div>
+          <div class="row"><div class="lab"><b>Не беспокоить</b><small>то же, что статус под списком друзей · звонки всё равно слышно</small></div><div class="seg js-dnd"><button data-v="0">Выкл</button><button data-v="60">1 час</button><button data-v="480">8 часов</button><button data-v="-1">Пока не выключу</button></div></div>
           <div class="row"><div class="lab"><b>«Отошёл» сам</b><small>без мыши и клавы столько времени — друзья видят жёлтую луну</small></div><div class="seg" data-pref="awayAfter"><button data-v="5">5 мин</button><button data-v="10">10 мин</button><button data-v="30">30 мин</button><button data-v="0">Никогда</button></div></div>
           <div class="row"><div class="lab"><b>Только упоминания</b><small>в группах</small></div><input class="tg" type="checkbox" data-pref="mentionsOnly" aria-label="Только упоминания"></div>
           <div class="row"><div class="lab"><b>Друг зашёл в сеть</b></div><input class="tg" type="checkbox" data-pref="friendOnline" aria-label="Друг в сети"></div>
-          <div class="row"><div class="lab"><b>Мигать в панели задач</b><small>когда окно свёрнуто</small></div><input class="tg" type="checkbox" data-pref="flash" aria-label="Мигать"></div>
+          <div class="row"><div class="lab"><b>Мигать в панели задач</b><small>когда окно свёрнуто · только в приложении</small></div><input class="tg" type="checkbox" data-pref="flash" aria-label="Мигать"></div>
         </div>
         <div class="spage" data-page="keys">
           <div class="row"><div class="lab"><b>Работают в играх</b><small class="js-gksub">рация и мик ловятся, даже когда Hunty свёрнут · клавиши у игры не отбираются</small></div><input class="tg js-gkeys" type="checkbox" data-pref="pttGlobal" aria-label="Хоткеи в играх"></div>
@@ -444,7 +440,7 @@
         <div class="spage" data-page="about">
           <div class="about">
             <span class="big"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 1.6v4.6M12 17.8v4.6M1.6 12h4.6M17.8 12h4.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></svg>Hunty</span>
-            <span class="js-ver">v0.6.0 · бесплатно навсегда</span>
+            <span class="js-ver">v0.7.0 · бесплатно навсегда</span>
             <span class="dim">P2P: libp2p (QUIC/TCP, Noise, DHT, relay, hole punching) · голос и демка — WebRTC</span>
             <button class="gbtn sm js-upd">Проверить обновления</button>
             <span class="dim js-updst"></span>
@@ -475,23 +471,21 @@
 
   <!-- ============ создать группу ============ -->
   <section class="win glass gnew" data-win="group" role="dialog" aria-modal="true" aria-label="Новая группа">
-    <header class="wh"><svg class="ic wi" aria-hidden="true"><use href="#i-users"/></svg><span class="wt">Новая группа</span><span class="wsub">чат и голос для своих</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <header class="wh"><svg class="ic wi" aria-hidden="true"><use href="#i-users"/></svg><span class="wt">Новая группа</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></header>
     <div class="wb">
-      <div class="gtop">
-        <button class="gpic js-gpic" type="button" title="Картинка группы" aria-label="Картинка группы"><span class="tile big js-gtile">?</span><i class="gpic-ed" aria-hidden="true"><svg class="ic" aria-hidden="true"><use href="#i-image-plus"/></svg></i></button>
-        <div class="gf">
-          <label class="flab" for="gname">Название</label>
-          <input class="inp js-gname" id="gname" placeholder="например, кухня" maxlength="32" autocomplete="off" data-autofocus="1">
-          <div class="swatches js-gcol"><button data-c="#7ee2b8" style="--sc:#7ee2b8" aria-label="Мятный"></button><button data-c="#9db7ff" style="--sc:#9db7ff" aria-label="Синий"></button><button data-c="#ffb36b" style="--sc:#ffb36b" aria-label="Оранжевый"></button><button data-c="#ff94b8" style="--sc:#ff94b8" aria-label="Розовый"></button><button data-c="#63e6ff" style="--sc:#63e6ff" aria-label="Голубой"></button><button data-c="#ffd36b" style="--sc:#ffd36b" aria-label="Жёлтый"></button><button data-c="#d6a8ff" style="--sc:#d6a8ff" aria-label="Сиреневый"></button><button data-c="#ff9f8f" style="--sc:#ff9f8f" aria-label="Коралловый"></button></div>
+      <div class="gid">
+        <button class="gpic js-gpic" type="button" title="Поставить картинку" aria-label="Картинка группы"><span class="tile big js-gtile"></span><i class="gpic-ed" aria-hidden="true"><svg class="ic" aria-hidden="true"><use href="#i-image-plus"/></svg></i></button>
+        <div class="gid-f">
+          <input class="inp gid-n js-gname" id="gname" placeholder="Название группы" maxlength="32" autocomplete="off" data-autofocus="1" aria-label="Название группы">
+          <div class="swatches js-gcol" role="group" aria-label="Цвет группы"><button data-c="#7ee2b8" style="--sc:#7ee2b8" aria-label="Мятный"></button><button data-c="#9db7ff" style="--sc:#9db7ff" aria-label="Синий"></button><button data-c="#ffb36b" style="--sc:#ffb36b" aria-label="Оранжевый"></button><button data-c="#ff94b8" style="--sc:#ff94b8" aria-label="Розовый"></button><button data-c="#63e6ff" style="--sc:#63e6ff" aria-label="Голубой"></button><button data-c="#ffd36b" style="--sc:#ffd36b" aria-label="Жёлтый"></button><button data-c="#d6a8ff" style="--sc:#d6a8ff" aria-label="Сиреневый"></button><button data-c="#ff9f8f" style="--sc:#ff9f8f" aria-label="Коралловый"></button></div>
         </div>
       </div>
-      <div class="ghead"><span class="gh-t">Кого позвать</span><span class="gcnt js-gcount">пока никого</span><span class="gh-sp"></span><button class="lnk js-gall" type="button">Всех</button><button class="lnk js-gnone" type="button" hidden>Снять всё</button></div>
+      <div class="gsec"><b>Участники</b><span class="gsec-n js-gcount"></span><span class="gsec-sp"></span><button class="lnk js-gall" type="button">Выбрать всех</button><button class="lnk js-gnone" type="button" hidden>Снять выбор</button></div>
       <div class="gchips js-gchips"></div>
       <label class="search gsr"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input class="js-gq" placeholder="Найти друга" autocomplete="off" spellcheck="false" aria-label="Найти друга"></label>
-      <div class="pick js-gpick" role="listbox" aria-multiselectable="true"></div>
-      <div class="row"><div class="lab"><b>Кто может звать новых</b><small>по ссылке-инвайту</small></div><div class="seg js-ginv"><button data-v="all" aria-pressed="true">Все</button><button data-v="admin" aria-pressed="false">Только админ</button></div></div>
+      <div class="pick gcard js-gpick" role="listbox" aria-multiselectable="true" aria-label="Кого позвать"></div>
     </div>
-    <footer class="wf"><button class="gbtn sm js-gtojoin" data-win="join"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>У меня инвайт</button><span class="note2">ты будешь админом</span><button class="gbtn js-close">Отмена</button><button class="cbtn js-gcreate">Создать</button></footer>
+    <footer class="wf"><button class="lnk gjoin js-gtojoin" type="button" data-win="join"><svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>У меня инвайт</button><span class="gsec-sp"></span><button class="gbtn js-close">Отмена</button><button class="cbtn js-gcreate">Создать</button></footer>
     <input type="file" class="js-gpicf" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
   </section>
   <!-- ============ мастер «меня плохо слышат» ============ -->
@@ -606,22 +600,40 @@
 
   <!-- ============ настройки группы ============ -->
   <section class="win glass gset" data-win="gset" role="dialog" aria-modal="true" aria-label="Настройки группы">
-    <header class="wh"><span class="gstw js-gstile"></span><span class="wt js-gstitle">Группа</span><span class="wsub js-gssub">настройки группы</span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <header class="wh"><span class="gstw js-gstile"></span><span class="gsh"><span class="wt js-gstitle">Группа</span><span class="wsub js-gssub"></span></span><button class="wx js-close" aria-label="Закрыть" title="Закрыть · Esc"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <nav class="gtabs js-gtabs" role="tablist" aria-label="Разделы"><button data-g="members" role="tab" aria-pressed="true">Участники<span class="gt-n js-gtn"></span></button><button data-g="main" role="tab" aria-pressed="false">Настройки</button><button data-g="invite" role="tab" aria-pressed="false">Приглашение</button></nav>
     <div class="wb">
-      <div class="seg js-gtabs"><button data-g="members" aria-pressed="true">Участники</button><button data-g="main" aria-pressed="false">Группа</button><button data-g="invite" aria-pressed="false">Инвайт</button></div>
-      <div class="gpage js-gmembers" data-g="members"></div>
-      <div class="gpage" data-g="main" hidden>
-        <div class="row"><div class="lab"><b>Название</b></div><input class="inp js-gsname" maxlength="32" aria-label="Название"></div>
-        <div class="row"><div class="lab"><b>Картинка</b><small>видят все участники · ужму сам</small></div><div class="btnrow"><span class="gspic js-gspic"></span><button class="gbtn sm js-gspicup" type="button"><svg class="ic" aria-hidden="true"><use href="#i-image-plus"/></svg>Загрузить</button><button class="gbtn sm js-gspicdel" type="button">Убрать</button></div></div>
-        <div class="row"><div class="lab"><b>Цвет</b></div><div class="swatches js-gscol"><button data-c="#7ee2b8" style="--sc:#7ee2b8" aria-label="Мятный"></button><button data-c="#9db7ff" style="--sc:#9db7ff" aria-label="Синий"></button><button data-c="#ffb36b" style="--sc:#ffb36b" aria-label="Оранжевый"></button><button data-c="#ff94b8" style="--sc:#ff94b8" aria-label="Розовый"></button><button data-c="#63e6ff" style="--sc:#63e6ff" aria-label="Голубой"></button><button data-c="#ffd36b" style="--sc:#ffd36b" aria-label="Жёлтый"></button></div></div>
-        <div class="row"><div class="lab"><b>Голос в группе</b><small>кнопка «Зайти» сверху · выключи, если группа только для переписки</small></div><input class="tg js-gsvoice" type="checkbox" aria-label="Голос в группе"></div>
-        <div class="row"><div class="lab"><b>Кто может приглашать</b></div><div class="seg js-gsinv"><button data-v="all">Все</button><button data-v="admin">Только админ</button></div></div>
-        <div class="row"><div class="lab"><b>Без звука</b><small>уведомления этой группы</small></div><input class="tg js-gsmute" type="checkbox" aria-label="Без звука"></div>
-        <div class="row"><div class="lab"><b>Выйти из группы</b><small>история у тебя удалится</small></div><button class="gbtn sm warn js-gsleave"><svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg>Выйти</button></div>
+      <div class="gpage" data-g="members">
+        <div class="gmtop"><button class="gmadd js-ginvadd" type="button"><span class="gmadd-i"><svg class="ic" aria-hidden="true"><use href="#i-user-round-plus"/></svg></span><span>Добавить участников</span></button><label class="search gmsr js-gmsr"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input class="js-gmq" placeholder="Найти" autocomplete="off" spellcheck="false" aria-label="Найти участника"></label></div>
+        <div class="gadd js-gadd" hidden></div>
+        <div class="gcard js-gmembers" role="list"></div>
       </div>
-      <div class="gpage" data-g="invite" hidden>
-        <div class="keyline"><code class="kc js-ginvc">…</code><button class="gbtn sm js-copy js-ginvcp" data-copy="">Копировать</button></div>
-        <div class="qrw"><div class="qr js-qr" role="img" aria-label="QR-код инвайта"></div><div><div class="flab">Ссылка действует, пока ты её не сбросишь</div><button class="gbtn sm js-gnew"><svg class="ic" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Сбросить ссылку</button><p class="lead">Друг вставляет ссылку в «Вступить по инвайту» — Hunty сам найдёт группу и скачает историю. Старые ссылки после сброса не работают.</p></div></div>
+      <div class="gpage" data-g="main" hidden>
+        <div class="gid">
+          <button class="gpic js-gspicup" type="button" title="Поменять картинку" aria-label="Картинка группы"><span class="js-gspic"></span><i class="gpic-ed" aria-hidden="true"><svg class="ic" aria-hidden="true"><use href="#i-image-plus"/></svg></i></button>
+          <div class="gid-f">
+            <input class="inp gid-n js-gsname" maxlength="32" aria-label="Название группы" placeholder="Название группы">
+            <div class="gid-row"><div class="swatches js-gscol" role="group" aria-label="Цвет группы"><button data-c="#7ee2b8" style="--sc:#7ee2b8" aria-label="Мятный"></button><button data-c="#9db7ff" style="--sc:#9db7ff" aria-label="Синий"></button><button data-c="#ffb36b" style="--sc:#ffb36b" aria-label="Оранжевый"></button><button data-c="#ff94b8" style="--sc:#ff94b8" aria-label="Розовый"></button><button data-c="#63e6ff" style="--sc:#63e6ff" aria-label="Голубой"></button><button data-c="#ffd36b" style="--sc:#ffd36b" aria-label="Жёлтый"></button><button data-c="#d6a8ff" style="--sc:#d6a8ff" aria-label="Сиреневый"></button><button data-c="#ff9f8f" style="--sc:#ff9f8f" aria-label="Коралловый"></button></div><button class="lnk js-gspicdel" type="button">Убрать картинку</button></div>
+          </div>
+        </div>
+        <p class="gro js-gsro" hidden><svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg>Менять настройки группы могут только админы</p>
+        <div class="gcard">
+          <div class="grow"><span class="grow-i"><svg class="ic" aria-hidden="true"><use href="#i-mic"/></svg></span><div class="lab"><b>Голосовой канал</b><small>трубка в шапке группы</small></div><input class="tg js-gsvoice" type="checkbox" aria-label="Голосовой канал"></div>
+          <div class="grow"><span class="grow-i"><svg class="ic" aria-hidden="true"><use href="#i-user-round-plus"/></svg></span><div class="lab"><b>Приглашать могут</b><small>добавлять друзей и делиться ссылкой</small></div><div class="seg js-gsinv"><button data-v="all">Все</button><button data-v="admin">Админы</button></div></div>
+          <div class="grow"><span class="grow-i"><svg class="ic" aria-hidden="true"><use href="#i-bell-off"/></svg></span><div class="lab"><b>Без звука</b><small>только у тебя · сообщения придут тихо</small></div><input class="tg js-gsmute" type="checkbox" aria-label="Без звука"></div>
+        </div>
+        <div class="gcard">
+          <button class="grow gdanger js-gsleave" type="button"><span class="grow-i"><svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg></span><div class="lab"><b>Выйти из группы</b><small>переписка у тебя удалится</small></div></button>
+        </div>
+      </div>
+      <div class="gpage ginv" data-g="invite" hidden>
+        <div class="qr js-qr" role="img" aria-label="QR-код приглашения"></div>
+        <div class="ginv-r">
+          <b class="ginv-t">Ссылка-приглашение</b>
+          <p class="ginv-s">Друг вставляет её в «Вступить по инвайту» — Hunty сам найдёт группу и скачает историю.</p>
+          <div class="ginv-l"><code class="kc js-ginvc">…</code><button class="cbtn sm js-copy js-ginvcp" data-copy=""><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Копировать</button></div>
+          <button class="lnk js-gnew" type="button"><svg class="ic" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Сбросить ссылку — старые перестанут работать</button>
+        </div>
       </div>
     </div>
   </section>

@@ -170,7 +170,6 @@ mark.me{background:var(--acc);color:var(--acc-ink);padding:0 2px;font-weight:600
 .send{display:grid;place-items:center;flex:none;width:42px;height:42px;border:0;border-radius:8px;background:var(--acc);color:var(--acc-ink);font-size:18px;box-shadow:inset -2px -3px 0 rgba(0,0,0,.25),inset 2px 2px 0 rgba(255,255,255,.35)}
 .send:active{transform:translateY(1px)}
 .phint{padding:2px 14px 8px;font-size:14px;color:var(--dim);background:rgba(0,0,0,.2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cur{display:inline-block;flex:none;width:1ch;height:1.1em;margin-left:1px;vertical-align:text-bottom;background:var(--acc);box-shadow:0 0 8px var(--acc);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 .live{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:4px;background:var(--bad);color:#1a0008;font-weight:600;font-size:14px;line-height:1}
 .live i{width:8px;height:8px;background:#1a0008;animation:blink 1s steps(1) infinite}

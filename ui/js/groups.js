@@ -6,11 +6,11 @@ import { OPEN, CLOSE, openW, closeW, tmsg, tone, TONES, toast, fail, segSet, seg
 import { openChat, renderLists, header, tileHTML, leaveGroup, pdHTML, lineOf } from './chat.js';
 import { shrinkImage } from './card.js';
 import { bump } from './motion.js';
-import { onCtx, ask } from './menu.js';
+import { onCtx, ask, openMenu } from './menu.js';
 import { personItems } from './people.js';
 import qrcode from './vendor/qrcode.js';
 
-/* ---------- создать: понятный выбор (галочка-кружок + чипы выбранных), своя картинка ---------- */
+/* ---------- создать: картинка, название, цвет и кого позвать — без лишнего ---------- */
 const gw = $('.win[data-win="group"]');
 const gname = $('.js-gname', gw), gtile = $('.js-gtile', gw), gpick = $('.js-gpick', gw), gq = $('.js-gq', gw);
 const picked = new Set(); let gpic = '';
@@ -18,20 +18,23 @@ function gcolor() { return segGet($('.js-gcol', gw)) || '#7ee2b8'; }
 function gTile() {
   gtile.style.setProperty('--tc', gcolor());
   gtile.classList.toggle('pic', !!gpic);
-  gtile.innerHTML = gpic ? `<img alt="" src="${esc(gpic)}" draggable="false">` : esc(((gname.value.trim() || '?')[0] || '?').toUpperCase());
+  const ch = (gname.value.trim()[0] || '').toUpperCase();
+  gtile.innerHTML = gpic ? `<img alt="" src="${esc(gpic)}" draggable="false">` : ch ? esc(ch) : ic('users');
+  const b = $('.js-gpic', gw); b.classList.toggle('empty', !gpic && !ch); b.title = gpic ? 'Убрать картинку' : 'Поставить картинку';
 }
 const friendsList = () => [...S.friends.values()].filter(f => f.state === 'friend').sort((a, b) => (isOnline(b.peer) - isOnline(a.peer)) || nickOf(a.peer).localeCompare(nickOf(b.peer)));
 function gCount() {
   const n = picked.size, all = friendsList().length;
-  $('.js-gcount', gw).textContent = n ? `выбрано ${n} ${plural(n, 'друг', 'друга', 'друзей')}` : 'пока никого · можно позвать потом по ссылке';
-  $('.js-gall', gw).hidden = !all || n === all; $('.js-gnone', gw).hidden = !n;
-  $('.js-gchips', gw).innerHTML = [...picked].map(p => `<button type="button" class="gchip" data-un="${esc(p)}" title="Убрать"><img class="ava" alt="" src="${avaOf(p)}"><span>${esc(nickOf(p))}</span>${ic('x')}</button>`).join('');
+  $('.js-gcount', gw).textContent = n ? `· ${n} из ${all}` : all ? '· можно позвать и потом' : '';
+  $('.js-gall', gw).hidden = all < 2 || n === all; $('.js-gnone', gw).hidden = !n || all < 2;
+  // чипы выбранных — только когда друзей много и список прокручивается
+  $('.js-gchips', gw).innerHTML = all < 6 ? '' : [...picked].map(p => `<button type="button" class="gchip" data-un="${esc(p)}" title="Убрать"><img class="ava" alt="" src="${avaOf(p)}"><span>${esc(nickOf(p))}</span>${ic('x')}</button>`).join('');
 }
 function renderPick() {
   const q = gq.value.trim().toLowerCase(), fr = friendsList();
   const list = q ? fr.filter(f => nickOf(f.peer).toLowerCase().includes(q)) : fr;
   gq.parentElement.hidden = fr.length < 6;
-  gpick.innerHTML = !fr.length ? '<div class="empty">друзей пока нет — создай группу и позови по ссылке</div>'
+  gpick.innerHTML = !fr.length ? '<div class="empty">друзей пока нет — создай группу и позови по ссылке-инвайту</div>'
     : !list.length ? '<div class="empty">никого с таким ником</div>'
     : list.map(f => `<button type="button" class="pk" role="option" data-p="${esc(f.peer)}" aria-pressed="${picked.has(f.peer)}" aria-selected="${picked.has(f.peer)}"><span class="avw"><img class="ava" alt="" src="${avaOf(f.peer)}">${pdHTML(f.peer)}</span><span class="pkn"><b>${esc(nickOf(f.peer))}</b><small>${esc(lineOf(f.peer))}</small></span><span class="pkc">${ic('check')}</span></button>`).join('');
   gCount();
@@ -66,7 +69,7 @@ $('.js-gcreate', gw).addEventListener('click', async () => {
   const name = gname.value.trim();
   if (!name) { gname.focus(); gname.classList.remove('shake'); void gname.offsetWidth; gname.classList.add('shake'); tmsg('warn', 'назови группу'); return; }
   try {
-    const r = await api('room_create', { name, color: gcolor(), members: [...picked], voice: true, invite: segGet($('.js-ginv', gw)) || 'all', ...(gpic ? { pic: gpic } : {}) });
+    const r = await api('room_create', { name, color: gcolor(), members: [...picked], voice: true, invite: 'all', ...(gpic ? { pic: gpic } : {}) });
     const room = r.room || r; S.rooms.set(room.id, room);
     closeW(true); renderLists(); openChat(room.id, { focus: true });
     if (fromCall) moveCall(fromCall, room.id, [...picked]);
@@ -118,39 +121,66 @@ bus.on('join_failed', v => {
 });
 bus.on('code', code => { if (code.startsWith('hunty://join/')) openW('join', { code }); else openW('friend', { code }); });
 
-/* ---------- настройки группы ---------- */
+/* ---------- настройки группы: вкладки подчёркиванием, окно одной высоты, действия с участником — в «⋯» ---------- */
 const sw = $('.win[data-win="gset"]');
-let gsRoom = '', gsTab = 'members';
-function setGTab(t) { gsTab = t; segSet($('.js-gtabs', sw), t); $$('.gpage', sw).forEach(p => p.hidden = p.dataset.g !== t); if (t === 'invite') loadInvite(); }
+let gsRoom = '', gsTab = 'members', gmQ = '';
+function setGTab(t) {
+  gsTab = t; segSet($('.js-gtabs', sw), t);
+  $$('.js-gtabs button', sw).forEach(b => b.setAttribute('aria-selected', String(b.dataset.g === t)));
+  $$('.gpage', sw).forEach(p => p.hidden = p.dataset.g !== t);
+  if (t === 'invite') loadInvite();
+}
 $('.js-gtabs', sw).addEventListener('click', e => { const b = e.target.closest('button[data-g]'); if (b) setGTab(b.dataset.g); });
-$$('.js-gtabs button', sw).forEach(b => b.dataset.v = b.dataset.g);
+const ROLE = { owner: 'создатель', admin: 'админ' };
+function memberRow(r, m) {
+  const role = ROLE[m.role] ? `<span class="role ${m.role === 'owner' ? 'own' : 'adm'}">${ROLE[m.role]}</span>` : '';
+  const st = m.me ? 'это ты' : S.friends.has(m.peer) ? lineOf(m.peer) : m.online ? 'в сети' : 'не в сети';
+  const more = m.me ? '' : `<button class="ib sm gm-more" type="button" data-gmore="${esc(m.peer)}" title="Действия" aria-label="Действия с ${esc(m.nick || short(m.peer))}" aria-haspopup="menu">${ic('ellipsis')}</button>`;
+  return `<div class="gmrow" role="listitem" data-u="${esc(m.peer)}"><span class="avw"><img class="ava" alt="" src="${avaOf(m.peer)}">${m.me ? '<i class="pd on" aria-hidden="true"></i>' : `<i class="pd${m.online ? ' on' : ''}" aria-hidden="true"></i>`}</span><span class="gmn"><b><span ${m.me ? '' : `data-prof="${esc(m.peer)}"`}>${esc(m.nick || short(m.peer))}</span>${role}</b><small>${esc(st)}</small></span>${more}</div>`;
+}
 function renderGset() {
   const r = S.rooms.get(gsRoom); if (!r) { closeW(true); return; }
+  const ms = (r.members || []).slice().sort((a, b) => (b.role === 'owner') - (a.role === 'owner') || (b.role === 'admin') - (a.role === 'admin') || (!!b.online - !!a.online) || String(a.nick || '').localeCompare(String(b.nick || '')));
+  const me = ms.find(m => m.me), my = me && ROLE[me.role] ? ' · ты ' + ROLE[me.role] : '';
   $('.js-gstile', sw).innerHTML = tileHTML(r); $('.js-gspic', sw).innerHTML = tileHTML(r);
-  $('.js-gspicup', sw).hidden = !r.admin; $('.js-gspicdel', sw).hidden = !r.admin || !r.pic;
   $('.js-gstitle', sw).textContent = r.name;
-  $('.js-gssub', sw).textContent = r.admin ? 'настройки группы · ты админ' : 'настройки группы';
-  const ms = (r.members || []).slice().sort((a, b) => (b.role === 'owner') - (a.role === 'owner') || (b.role === 'admin') - (a.role === 'admin') || (b.online - a.online));
-  $('.js-gmembers', sw).innerHTML = ms.map(m => {
-    const role = m.role === 'owner' ? '<span class="role own">создатель</span>' : m.role === 'admin' ? '<span class="role adm">админ</span>' : '';
-    const acts = r.admin && !m.me && m.role !== 'owner' ? `<button class="ib sm" data-gadm="${esc(m.peer)}" data-on="${m.role === 'admin' ? 0 : 1}" title="${m.role === 'admin' ? 'Снять админа' : 'Сделать админом'}">${ic('crown')}</button><button class="ib sm no" data-gkick="${esc(m.peer)}" title="Выгнать">${ic('ban')}</button>` : '';
-    return `<div class="mrow"><span class="avw"><img class="ava" alt="" src="${avaOf(m.peer)}"><i class="pd${m.online ? ' on' : ''}"></i></span><b class="mn" ${m.me ? '' : `data-prof="${esc(m.peer)}"`}>${esc(m.nick || short(m.peer))}${m.me ? ' <span class="dim">(ты)</span>' : ''}</b>${role}<span class="mra">${acts}</span></div>`;
-  }).join('') + ((r.invite === 'all' || r.admin) ? `<button class="pbtn wide js-ginvadd">${ic('user-round-plus')}Добавить друзей</button><div class="js-gadd" hidden></div>` : '');
-  $('.js-gsname', sw).value = r.name; $('.js-gsname', sw).disabled = !r.admin;
-  segSet($('.js-gscol', sw), r.color); $('.js-gscol', sw).classList.toggle('ro', !r.admin);
-  $('.js-gsvoice', sw).checked = !!r.voice; $('.js-gsvoice', sw).disabled = !r.admin;
-  segSet($('.js-gsinv', sw), r.invite); $$('.js-gsinv button', sw).forEach(b => b.disabled = !r.admin);
+  $('.js-gssub', sw).textContent = `${ms.length} ${plural(ms.length, 'участник', 'участника', 'участников')} · в сети ${ms.filter(m => m.online || m.me).length}${my}`;
+  $('.js-gtn', sw).textContent = ms.length;
+  // участники
+  const canAdd = r.invite === 'all' || r.admin;
+  $('.js-ginvadd', sw).hidden = !canAdd; if (!canAdd) $('.js-gadd', sw).hidden = true;
+  $('.js-gmsr', sw).hidden = ms.length < 9;
+  const q = gmQ.trim().toLowerCase(), list = q ? ms.filter(m => String(m.nick || m.peer).toLowerCase().includes(q)) : ms;
+  $('.js-gmembers', sw).innerHTML = list.length ? list.map(m => memberRow(r, m)).join('') : '<div class="gmempty">никого с таким ником</div>';
+  if (!$('.js-gadd', sw).hidden) renderGadd();
+  // настройки
+  const ad = !!r.admin;
+  $('.js-gspicup', sw).disabled = !ad; $('.js-gspicup', sw).title = ad ? 'Поменять картинку' : '';
+  $('.js-gspicdel', sw).hidden = !ad || !r.pic;
+  $('.js-gsro', sw).hidden = ad;
+  if (document.activeElement !== $('.js-gsname', sw)) $('.js-gsname', sw).value = r.name;
+  $('.js-gsname', sw).disabled = !ad;
+  segSet($('.js-gscol', sw), r.color); $('.js-gscol', sw).classList.toggle('ro', !ad); $('.js-gscol', sw).hidden = !ad;
+  $('.js-gsvoice', sw).checked = !!r.voice; $('.js-gsvoice', sw).disabled = !ad;
+  segSet($('.js-gsinv', sw), r.invite); $$('.js-gsinv button', sw).forEach(b => b.disabled = !ad);
   $('.js-gsmute', sw).checked = !!r.muted;
-  $('.js-gnew', sw).hidden = !r.admin;
+  $('.js-gnew', sw).hidden = !ad;
 }
-OPEN.gset = (_, o) => { gsRoom = o.room || S.cur; renderGset(); setGTab(o.tab || 'members'); };
+function renderGadd() {
+  const r = S.rooms.get(gsRoom), have = new Set(((r && r.members) || []).map(m => m.peer));
+  const fr = [...S.friends.values()].filter(f => f.state === 'friend' && !have.has(f.peer)).sort((a, b) => (isOnline(b.peer) - isOnline(a.peer)) || nickOf(a.peer).localeCompare(nickOf(b.peer)));
+  const box = $('.js-gadd', sw);
+  box.innerHTML = fr.length ? `<div class="pick gcard">${fr.map(f => `<button type="button" class="pk" data-ginv="${esc(f.peer)}"><img class="ava" alt="" src="${avaOf(f.peer)}"><span>${esc(nickOf(f.peer))}</span>${ic('plus')}</button>`).join('')}</div>` : '<div class="gcard empty">все друзья уже тут — остальных зови ссылкой во вкладке «Приглашение»</div>';
+}
+OPEN.gset = (_, o) => { gsRoom = o.room || S.cur; gmQ = ''; $('.js-gmq', sw).value = ''; $('.js-gadd', sw).hidden = true; $('.js-ginvadd', sw).setAttribute('aria-expanded', 'false'); renderGset(); setGTab(o.tab || 'members'); };
+$('.js-gmq', sw).addEventListener('input', e => { gmQ = e.target.value; renderGset(); });
 async function upd(patch, msg) {
   try { const j = await api('room_update', { room: gsRoom, ...patch }); if (j && j.id) S.rooms.set(j.id, j); renderGset(); header(); renderLists(); if (msg) tmsg('ok', msg); }
   catch (e) { fail(e); renderGset(); }
 }
 $('.js-gsname', sw).addEventListener('change', e => { const v = e.target.value.trim(); if (v) upd({ name: v }, 'группа переименована'); });
 $('.js-gscol', sw).addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (b && S.rooms.get(gsRoom).admin) upd({ color: b.dataset.c }); });
-$('.js-gspicup', sw).addEventListener('click', () => pickGroupPic($('.js-gpicf', gw), u => upd({ pic: u }, 'картинка группы обновлена · участники увидят сразу')));
+$('.js-gspicup', sw).addEventListener('click', () => { if (S.rooms.get(gsRoom).admin) pickGroupPic($('.js-gpicf', gw), u => upd({ pic: u }, 'картинка группы обновлена · участники увидят сразу')); });
 $('.js-gspicdel', sw).addEventListener('click', () => upd({ pic: '' }, 'картинка убрана'));
 $('.js-gsvoice', sw).addEventListener('change', e => upd({ voice: e.target.checked }, e.target.checked ? 'голосовой канал включён' : 'голосовой канал выключен'));
 $('.js-gsinv', sw).addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (b && !b.disabled) upd({ invite: b.dataset.v }); });
@@ -162,30 +192,23 @@ async function kick(peer) {
   try { await api('send', { room: gsRoom, kind: 'sys', text: 'kick:' + peer }).then(pushLocal).catch(() => {}); const j = await api('room_kick', { room: gsRoom, peer }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', `${nickOf(peer)} выгнан · старый инвайт больше не работает`); } catch (err) { fail(err); }
 }
 async function setAdmin(peer, on) { try { const j = await api('room_admin', { room: gsRoom, peer, on }); S.rooms.set(j.id, j); renderGset(); tmsg('ok', on ? `${nickOf(peer)} теперь админ` : `${nickOf(peer)} больше не админ`); } catch (err) { fail(err); } }
-// правый клик по участнику: меню человека + админка
-onCtx('.js-gmembers .mrow', el => {
-  const b = el.querySelector('[data-prof]'), p = b ? b.dataset.prof : myId();
+// правый клик по участнику или «⋯»: меню человека + админка
+function memberItems(p) {
   const r = S.rooms.get(gsRoom), m = ((r && r.members) || []).find(x => x.peer === p);
   const extra = r && r.admin && m && !m.me && m.role !== 'owner' ? [
     { icon: 'crown', label: m.role === 'admin' ? 'Снять админа' : 'Сделать админом', fn: () => setAdmin(p, m.role !== 'admin') },
     { icon: 'ban', label: 'Выгнать из группы', danger: true, fn: () => kick(p) },
   ] : [];
   return personItems(p, { extra, sub: m ? (m.role === 'owner' ? 'создатель группы' : m.role === 'admin' ? 'админ группы' : '') : '' });
-});
+}
+onCtx('.js-gmembers .gmrow', el => memberItems(el.dataset.u || myId()));
 sw.addEventListener('click', async e => {
-  const k = e.target.closest('[data-gkick]');
-  if (k) { kick(k.dataset.gkick); return; }
-  const a = e.target.closest('[data-gadm]');
-  if (a) { setAdmin(a.dataset.gadm, a.dataset.on === '1'); return; }
-  if (e.target.closest('.js-ginvadd')) {
-    const r = S.rooms.get(gsRoom), have = new Set((r.members || []).map(m => m.peer));
-    const fr = [...S.friends.values()].filter(f => f.state === 'friend' && !have.has(f.peer));
-    const box = $('.js-gadd', sw); box.hidden = false;
-    box.innerHTML = fr.length ? `<div class="pick">${fr.map(f => `<button type="button" class="pk" data-ginv="${esc(f.peer)}"><img class="ava" alt="" src="${avaOf(f.peer)}"><span>${esc(nickOf(f.peer))}</span>${ic('plus')}</button>`).join('')}</div>` : '<div class="empty">все друзья уже тут — зови остальных по ссылке во вкладке «Инвайт»</div>';
-    return;
-  }
+  const mo = e.target.closest('[data-gmore]');
+  if (mo) { const it = memberItems(mo.dataset.gmore); if (it) { mo.setAttribute('aria-expanded', 'true'); openMenu(it, { el: mo }); } return; }
+  const ad = e.target.closest('.js-ginvadd');
+  if (ad) { const box = $('.js-gadd', sw), on = box.hidden; box.hidden = !on; ad.setAttribute('aria-expanded', String(on)); if (on) renderGadd(); return; }
   const gi = e.target.closest('[data-ginv]');
-  if (gi) { try { const j = await api('room_add', { room: gsRoom, peers: [gi.dataset.ginv] }); if (j && j.id) S.rooms.set(j.id, j); gi.setAttribute('aria-pressed', 'true'); gi.disabled = true; tmsg('ok', `${nickOf(gi.dataset.ginv)} добавлен в группу`); } catch (err) { fail(err); } }
+  if (gi) { try { gi.disabled = true; const j = await api('room_add', { room: gsRoom, peers: [gi.dataset.ginv] }); if (j && j.id) S.rooms.set(j.id, j); tmsg('ok', `${nickOf(gi.dataset.ginv)} добавлен в группу`); renderGset(); } catch (err) { gi.disabled = false; fail(err); } }
 });
 async function loadInvite() {
   const c = $('.js-ginvc', sw), q = $('.js-qr', sw);

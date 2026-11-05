@@ -7,16 +7,17 @@ import { emo, emoImg, emojiOnly } from './emoji.js';
 import { openPicker } from './picker.js';
 import { renderWs, tabOpened, isPinned } from './tabs.js';
 import { flip, fly, bump, still, SOFT } from './motion.js';
-import { app, tmsg, tone, TONES, toast, openW, closeW, OPEN, fail, notify, winOpen, copyText, sfx } from './ui.js';
+import { app, tmsg, tone, TONES, toast, openW, closeW, OPEN, fail, notify, winOpen, copyText, sfx, dnd } from './ui.js';
 import { mobURL, MOBKEYS } from './mobs.js';
 import { onCtx, openMenu, ask, selectionIn } from './menu.js';
 import { hallWhy, CUP } from './hof.js';
+import { personItems, volOf, setVol, mutedFor, setMute } from './people.js';
 import { fxOf, fxChip } from './fxdef.js';
 
-const chatsEl = $('.js-chats'), friendsEl = $('.js-friends'), logsEl = $('.js-logs'), typEl = $('.js-typing'), nochat = $('.js-nochat');
+const chatsEl = $('.js-chats'), logsEl = $('.js-logs'), typEl = $('.js-typing'), nochat = $('.js-nochat');
 const chead = $('.js-chead'), cmeta = $('.js-cmeta'), hbtns = $('.js-hbtns');
 const form = $('.js-form'), input = $('.js-input'), fileIn = $('.js-file'), cbar = $('.js-cbar');
-let tab = 'chats', Q = '';
+let Q = '';
 export { renderWs };
 /** править своё сообщение можно 30 секунд после отправки (ядро проверяет то же самое) */
 export const EDIT_MS = 30000;
@@ -68,7 +69,7 @@ function lastPreview(r) {
   if (ty.length) return `<span class="lty">${esc(nickOf(ty[0]))}${ty.length > 1 ? ' и ещё ' + (ty.length - 1) : ''} печатает<span class="pix" aria-hidden="true"><i></i><i></i><i></i></span></span>`;
   const l = r.last;
   if (r.pending) return '<span class="dim">ищу участников группы…</span>';
-  if (!l) return '<span class="dim">пока пусто — напиши первым</span>';
+  if (!l) return r.kind === 'dm' ? `<span class="dim">${emo(esc(lineOf(dmPeer(r))))}</span>` : '<span class="dim">пока пусто — напиши первым</span>';
   if (l.kind === 'sys') return esc(sysText(l));
   const me = l.from === myId();
   const pre = r.kind === 'self' ? (l.data && l.data.fwd && l.data.fwd.n ? `<b>${esc(l.data.fwd.n)}:</b> ` : '') : me ? '<b>ты:</b> ' : r.kind === 'dm' ? '' : `<b>${esc(nickOf(l.from))}:</b> `;
@@ -83,15 +84,36 @@ export const sorted = () => [...S.rooms.values()].sort((a, b) => ((b.last && b.l
 function chatRow(r) {
   const vc = voiceCount(r.id), pin = isPinned(r.id), on = r.id === S.cur;
   const badge = r.unread && r.id !== S.cur ? `<span class="ub${r.muted ? ' mute' : ''}">${r.unread > 99 ? '99+' : r.unread}</span>` : vc ? `<span class="vc" title="в голосе">${ic('mic')}${vc}</span>` : '';
-  return `<button class="ci${on ? ' on' : ''}${pin ? ' pinned' : ''}" data-chat="${esc(r.id)}" role="listitem"${on ? ' aria-current="true"' : ''}>${avHTML(r)}<span class="nm">${esc(roomName(r))}${r.muted ? ic('bell-off') : ''}${pin ? `<span class="cpin" title="закреплён">${ic('pin')}</span>` : ''}</span><time>${when((r.last && r.last.ts) || r.created)}</time><span class="lm">${lastPreview(r)}</span>${badge}</button>`;
+  return `<button class="ci${on ? ' on' : ''}${pin ? ' pinned' : ''}" data-chat="${esc(r.id)}" role="listitem"${on ? ' aria-current="true"' : ''}>${avHTML(r)}<span class="nm">${esc(roomName(r))}${r.muted ? ic('bell-off') : ''}${pin ? `<span class="cpin" title="закреплён">${ic('pin')}</span>` : ''}</span><time>${r.last ? when(r.last.ts) : r.kind === 'dm' ? '' : when(r.created)}</time><span class="lm">${lastPreview(r)}</span>${badge}</button>`;
+}
+/* ---------- слева один список (как в Telegram): заявки, чаты и группы по свежести, друзья, с кем ещё не
+   переписывался (клик — открыть личку и начать общение), отправленные заявки и «рядом, в локалке» ---------- */
+const nickF = f => (f.profile && f.profile.nick) || short(f.peer);
+function freshRow(f) {
+  const p = f.profile || {}, g = shownOnline(f.peer) && p.game ? ' game' : '';
+  const vr = Object.keys(S.voices).find(k => voiceIn(k)[f.peer]);
+  return `<button class="ci fresh" data-dm="${esc(f.peer)}" role="listitem" title="Написать ${esc(nickF(f))}"><span class="avw"><img class="ava" alt="" src="${avaOf(f.peer)}">${pdHTML(f.peer)}</span><span class="nm">${esc(nickF(f))}</span><time></time><span class="lm${g}">${g ? ic('gamepad-2') : ''}${emo(esc(lineOf(f.peer)))}</span>${vr ? `<span class="vc" title="в голосе">${ic('mic')}</span>` : '<span class="fgo" aria-hidden="true">' + ic('message-circle') + '</span>'}</button>`;
 }
 export function renderChats() {
-  const q = Q.trim().toLowerCase();
-  const rs = sorted().filter(r => !q || roomName(r).toLowerCase().includes(q) || ((r.last && r.last.text) || '').toLowerCase().includes(q));
-  const po = prefs.pinned || [], pin = rs.filter(r => po.includes(r.id)).sort((a, b) => po.indexOf(a.id) - po.indexOf(b.id)), rest = rs.filter(r => !po.includes(r.id));
-  let html;
-  if (!rs.length) html = q ? '<div class="empty">ничего не нашлось</div>' : `<div class="empty">чатов пока нет<br><button class="pbtn wide" data-win="friend">${ic('user-round-plus')}Добавить друга</button><button class="pbtn wide" data-win="join">${ic('link')}Вступить по инвайту</button></div>`;
-  else html = (pin.length ? `<div class="sec cs" data-k="s:pin">${ic('pin')}Закреплённые</div>${pin.map(chatRow).join('')}${rest.length ? '<div class="sec cs" data-k="s:all">Чаты</div>' : ''}` : '') + rest.map(chatRow).join('');
+  const q = Q.trim().toLowerCase(), hit = t => !q || String(t || '').toLowerCase().includes(q);
+  const po = prefs.pinned || [];
+  // личка без единого сообщения — это ещё не чат (как в Telegram): друг остаётся в «Ещё не переписывались»
+  const talked = r => r.kind !== 'dm' || r.last || r.unread || r.id === S.cur || po.includes(r.id) || voiceCount(r.id) || !S.friends.has(dmPeer(r));
+  const rs = sorted().filter(r => talked(r) && (hit(roomName(r)) || hit(r.last && r.last.text)));
+  const pin = rs.filter(r => po.includes(r.id)).sort((a, b) => po.indexOf(a.id) - po.indexOf(b.id)), rest = rs.filter(r => !po.includes(r.id));
+  const dms = new Set([...S.rooms.values()].filter(r => r.kind === 'dm' && talked(r)).map(dmPeer));
+  const all = [...S.friends.values()].filter(f => hit(nickF(f)) || hit(f.profile && f.profile.line));
+  const inc = all.filter(f => f.state === 'incoming'), out = all.filter(f => f.state === 'outgoing');
+  const fresh = all.filter(f => f.state === 'friend' && !dms.has(f.peer)).sort((a, b) => (shownOnline(b.peer) - shownOnline(a.peer)) || nickF(a).localeCompare(nickF(b)));
+  const near = q ? [] : [...S.nearby.entries()].filter(([p]) => !S.friends.has(p));
+  let html = '';
+  if (inc.length) html += `<div class="sec cs req" data-k="s:req">${ic('user-round-plus')}Заявки в друзья · ${inc.length}</div>` + inc.map(f => reqRow(f)).join('');
+  if (pin.length) html += `<div class="sec cs" data-k="s:pin">${ic('pin')}Закреплённые</div>${pin.map(chatRow).join('')}${rest.length ? '<div class="sec cs" data-k="s:all">Чаты</div>' : ''}`;
+  html += rest.map(chatRow).join('');
+  if (fresh.length) html += `<div class="sec cs" data-k="s:fresh">Ещё не переписывались · ${fresh.length}</div>` + fresh.map(freshRow).join('');
+  if (out.length) html += `<div class="sec cs" data-k="s:out">Отправленные заявки · ${out.length}</div>` + out.map(f => reqRow(f)).join('');
+  if (near.length) html += `<div class="sec cs" data-k="s:near">Рядом, в локалке · ${near.length}</div>` + near.map(([p, pr]) => `<div class="ci req" role="listitem"><span class="avw"><img class="ava" alt="" src="${avaOf(p)}"><i class="pd on"></i></span><span class="nm">${esc(pr.nick)}</span><span class="lm">${esc(pr.line || 'в той же сети')}</span><span class="ra"><button class="ib ok" data-add="${esc(p)}" title="Добавить в друзья" aria-label="Добавить ${esc(pr.nick)} в друзья">${ic('user-round-plus')}</button></span></div>`).join('');
+  if (!html) html = q ? '<div class="empty">ничего не нашлось</div>' : `<div class="empty">тут будут друзья и чаты<br><button class="pbtn wide" data-win="friend">${ic('user-round-plus')}Добавить друга</button><button class="pbtn wide" data-win="join">${ic('link')}Вступить по инвайту</button></div>`;
   // одинаковый HTML не перерисовываем: иначе клик, попавший между mousedown и mouseup, теряется
   if (html !== chatsEl._h) {
     const sig = [...pin, ...rest].map(r => r.id).join(','), moved = chatsEl._sig && chatsEl._sig !== sig;
@@ -99,45 +121,19 @@ export function renderChats() {
     const put = () => { chatsEl.innerHTML = html; chatsEl._h = html; };
     if (moved) flip(chatsEl, '.ci[data-chat], .sec[data-k]', put); else put();
   }
+  const n = $('.js-reqn'), k = [...S.friends.values()].filter(f => f.state === 'incoming').length;
+  n.textContent = k; n.hidden = !k; n.setAttribute('aria-label', 'заявок в друзья: ' + k);
   renderWs();
-}
-function friendRow(f) {
-  const p = f.profile || {}, vr = Object.keys(S.voices).find(k => voiceIn(k)[f.peer]);
-  const right = vr ? `<span class="vc" title="в голосе">${ic('mic')}</span>` : '';
-  const g = shownOnline(f.peer) && p.game ? ' game' : '';
-  return `<button class="ci" data-prof="${esc(f.peer)}" role="listitem"><span class="avw"><img class="ava" alt="" src="${avaOf(f.peer)}">${pdHTML(f.peer)}</span><span class="nm">${esc(p.nick || short(f.peer))}</span><time></time><span class="lm${g}">${g ? ic('gamepad-2') : ''}${emo(esc(lineOf(f.peer)))}</span>${right}</button>`;
 }
 export function reqRow(f, inWin) {
   const p = f.profile || {};
   if (f.state === 'incoming') return `<div class="ci req" role="listitem"><span class="avw"><img class="ava" alt="" src="${avaOf(f.peer)}">${pdHTML(f.peer)}</span><span class="nm">${esc(p.nick || short(f.peer))}</span><span class="lm">хочет в друзья${p.line ? ' · ' + esc(p.line) : ''}</span><span class="ra"><button class="ib ok" data-fr="ok" data-u="${esc(f.peer)}" title="Принять" aria-label="Принять">${ic('check')}</button><button class="ib no" data-fr="no" data-u="${esc(f.peer)}" title="Отклонить" aria-label="Отклонить">${ic('x')}</button></span></div>`;
   return `<div class="ci req out" role="listitem"><span class="avw"><img class="ava" alt="" src="${avaOf(f.peer)}">${pdHTML(f.peer)}</span><span class="nm">${esc(p.nick || short(f.peer))}</span><span class="lm">${isOnline(f.peer) ? 'заявка отправлена · ждём ответа' : 'ищу в сети… заявка уйдёт, когда найдётся'}</span><span class="ra"><button class="ib no" data-fr="cancel" data-u="${esc(f.peer)}" title="Отменить" aria-label="Отменить">${ic('x')}</button></span></div>`;
 }
-export function renderFriends() {
-  const q = Q.trim().toLowerCase();
-  const fl = f => !q || ((f.profile && f.profile.nick) || '').includes(q) || ((f.profile && f.profile.line) || '').toLowerCase().includes(q);
-  const all = [...S.friends.values()].filter(fl);
-  const inc = all.filter(f => f.state === 'incoming'), out = all.filter(f => f.state === 'outgoing'), fr = all.filter(f => f.state === 'friend');
-  const on = fr.filter(f => shownOnline(f.peer)).sort((a, b) => (a.profile.nick || '').localeCompare(b.profile.nick || '')), off = fr.filter(f => !shownOnline(f.peer));
-  let h = '';
-  if (inc.length) h += `<div class="sec">Заявки · ${inc.length}</div>` + inc.map(f => reqRow(f)).join('');
-  if (on.length) h += `<div class="sec">В сети · ${on.length}</div>` + on.map(friendRow).join('');
-  if (off.length) h += `<div class="sec">Не в сети · ${off.length}</div>` + off.map(friendRow).join('');
-  if (out.length) h += `<div class="sec">Отправленные · ${out.length}</div>` + out.map(f => reqRow(f)).join('');
-  const near = [...S.nearby.entries()].filter(([p]) => !S.friends.has(p));
-  if (near.length && !q) h += `<div class="sec">Рядом, в локалке · ${near.length}</div>` + near.map(([p, pr]) => `<div class="ci req" role="listitem"><span class="avw"><img class="ava" alt="" src="${avaOf(p)}"><i class="pd on"></i></span><span class="nm">${esc(pr.nick)}</span><span class="lm">${esc(pr.line || 'в той же сети')}</span><span class="ra"><button class="ib ok" data-add="${esc(p)}" title="Добавить" aria-label="Добавить">${ic('user-round-plus')}</button></span></div>`).join('');
-  if (!h) h = `<div class="empty">${q ? 'никого не нашлось' : 'друзей пока нет — добавь по нику или скинь свой код'}</div>`;
-  h += `<button class="pbtn wide" data-win="friend">${ic('user-round-plus')}Добавить друга</button>`;
-  if (h !== friendsEl._h) { friendsEl.innerHTML = h; friendsEl._h = h; }
-  const n = $('.js-reqn'), k = [...S.friends.values()].filter(f => f.state === 'incoming').length;
-  n.textContent = k; n.hidden = !k; n.setAttribute('aria-label', 'заявок: ' + k);
-}
-export function renderLists() { renderChats(); renderFriends(); }
-export function setTab(t) {
-  tab = t; $$('.stab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
-  chatsEl.hidden = t !== 'chats'; friendsEl.hidden = t !== 'friends';
-  $('.js-search').placeholder = t === 'chats' ? 'Поиск по чатам' : 'Поиск друзей';
-}
-$$('.stab').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+export function renderLists() { renderChats(); }
+export const renderFriends = renderChats;
+/** вкладок «Чаты/Друзья» больше нет — один список; setTab оставлен для старых вызовов: показать список */
+export function setTab() {}
 $('.js-search').addEventListener('input', e => { Q = e.target.value; renderLists(); });
 
 /* ---------- переход в чат из списка (вкладки сверху — в tabs.js) ---------- */
@@ -176,7 +172,11 @@ export function header() {
     const ms = r.members || [], on = ms.filter(m => m.online).length, vc = voiceCount(r.id);
     chead.innerHTML = tileHTML(r) + `<span class="pt">${esc(r.name)}</span>`;
     cmeta.textContent = r.pending ? 'ищу участников в сети…' : `${ms.length} ${plural(ms.length, 'участник', 'участника', 'участников')} · в сети ${on}` + (vc ? ` · в голосе ${vc}` : '');
-    hbtns.innerHTML = (r.voice ? `<button class="ib" data-act="voice" title="Голосовой канал" aria-label="Голосовой канал">${ic('mic')}</button>` : '') +
+    // голос группы — только тут, справа в шапке (сверху «Зайти» больше нет): трубка, а если там кто-то есть — зелёная и со счётчиком
+    const inV = S.myVoice && S.myVoice[0] === r.id;
+    const vb = !r.voice ? '' : inV ? `<button class="ib hang" data-act="hang" title="Выйти из голоса" aria-label="Выйти из голоса">${ic('phone-off')}</button>`
+      : `<button class="ib vgo${vc ? ' live' : ''}" data-act="voice" title="${vc ? `Зайти в голос · там ${vc}` : 'Зайти в голос'}" aria-label="${vc ? `Зайти в голос, там ${vc}` : 'Зайти в голос'}">${ic('phone')}${vc ? `<b class="vn">${vc}</b>` : ''}</button>`;
+    hbtns.innerHTML = vb +
       ((r.invite === 'all' || r.admin) ? `<button class="ib" data-act="invite" title="Пригласить" aria-label="Пригласить">${ic('user-round-plus')}</button>` : '') +
       MEDIAB() + `<button class="ib" data-act="find" title="Поиск по переписке (Ctrl+F)" aria-label="Поиск по переписке">${ic('search')}</button>` +
       `<button class="ib" data-act="gset" title="Настройки группы" aria-label="Настройки группы">${ic('settings')}</button>`;
@@ -312,10 +312,15 @@ new ResizeObserver(() => { const l = logs.get(S.cur); if (l && !l.hidden && l._s
 const atBottom = l => l.scrollHeight - l.scrollTop - l.clientHeight < 80;
 export const toBottom = l => { if (l) l.scrollTop = l.scrollHeight; };
 /** начало чата (как в Discord): большая ава, «это начало…» и пара кнопок */
-function motd(r) {
+function motd(r, had) {
   const d = document.createElement('div'); d.className = 'motd hello';
   if (r.kind === 'self') {
     d.innerHTML = `<span class="mo-av">${tileHTML(r)}</span><h2>Избранное</h2><p>Чат с собой: сохраняй сюда сообщения из любых чатов (наведи на сообщение → «…» → «В избранное»), кидай заметки, ссылки и файлы. Видишь только ты — друзьям сюда не попасть. Править своё можно сколько угодно.</p>`;
+  } else if (r.kind === 'dm' && !had && !r.last && !(S.msgs.get(r.id) || []).length) {
+    // ещё ни слова (как в Telegram): по центру — друг, «вы ещё не переписывались» и стикер-приветствие в один клик
+    const p = dmPeer(r);
+    d.classList.add('first');
+    d.innerHTML = `<div class="fst"><img class="fst-av" alt="" src="${avaOf(p)}" data-prof="${esc(p)}"><h2 style="--mc:${esc(colorOf(p))}">${esc(nickOf(p))}</h2><span class="fst-st">${pdHTML(p).replace('class="pd', 'class="pd inl')}${emo(esc(lineOf(p)))}</span><p>Вы ещё не переписывались. Напиши что-нибудь — или помаши стикером, это быстрее.</p><button type="button" class="fst-stk" data-mo="wave" title="Отправить стикер «Привет»" aria-label="Помахать: отправить стикер «Привет»"><img alt="" src="${esc(stkSrc({ k: 'wave' }))}" draggable="false"><span>Помахать</span></button><div class="mo-b"><button type="button" class="gbtn sm" data-mo="call">${ic('phone')}Позвонить</button><button type="button" class="gbtn sm" data-prof="${esc(p)}">${ic('user-round')}Профиль</button></div></div>`;
   } else if (r.kind === 'dm') {
     const p = dmPeer(r);
     d.innerHTML = `<img class="mo-av" alt="" src="${avaOf(p)}" data-prof="${esc(p)}"><h2 style="--mc:${esc(colorOf(p))}">${esc(nickOf(p))}</h2><p>Это начало вашей переписки с <b>@${esc(nickOf(p))}</b>. Сообщения идут напрямую от компа к компу и хранятся только у вас двоих.</p><div class="mo-b"><button type="button" class="gbtn sm" data-prof="${esc(p)}">${ic('user-round')}Профиль</button><button type="button" class="gbtn sm" data-mo="call">${ic('phone')}Позвонить</button></div>`;
@@ -325,6 +330,7 @@ function motd(r) {
   d.addEventListener('click', e => {
     const b = e.target.closest('[data-mo]'); if (!b) return;
     if (b.dataset.mo === 'call') bus.emit('call', r.id);
+    else if (b.dataset.mo === 'wave') { if (S.cur === r.id) sendSticker({ k: 'wave' }); }
     else if (b.dataset.mo === 'inv') openW('gset', { room: r.id, tab: 'invite' });
     else if (b.dataset.mo === 'set') openW('gset', { room: r.id, tab: 'main' });
   });
@@ -379,6 +385,7 @@ function appendMsg(room, m) {
   const last = arr[arr.length - 1];
   if (last && last.id !== m.id) { renderLog(room, atBottom(l) ? '' : 'top'); return; } // пришло не по порядку
   const bottom = atBottom(l) || m.from === myId();
+  const fm = $('.motd.first', l); if (fm) { const r = S.rooms.get(room); if (r) fm.replaceWith(motd(r, true)); } // первое сообщение — «начните общение» уступает обычному началу чата
   const prev = lastMsgEl(l);
   if (!prev || new Date(+prev.dataset.ts).toDateString() !== new Date(m.ts).toDateString()) l.appendChild(daySep(m.ts));
   const e = msgEl(m); l.appendChild(e); grp(e);
@@ -738,7 +745,11 @@ function sendTyping(on = true) {
   tySent = on ? Date.now() : 0;
   api('ev', { room: S.cur, kind: 'typing', data: { on } }).catch(() => {});
 }
-bus.on('pref', k => { if (k === 'msgSize' || k === 'font') autosize(); });
+bus.on('pref', k => {
+  if (k === 'msgSize' || k === 'font') autosize();
+  // превью ссылок выключили/включили — сразу во всех загруженных лентах (выключил — картинки с чужих сайтов больше не грузятся)
+  if (k === 'linkPrev') logs.forEach((l, room) => { if (S.msgs.has(room)) renderLog(room, l._stick === false ? 'top' : ''); });
+});
 input.addEventListener('input', () => { autosize(); if (editing) return; if (input.value.trim()) { sendTyping(true); clearTimeout(tyT); tyT = setTimeout(() => sendTyping(false), 5000); } });
 function wrapSel(a, b = a) {
   const s = input.selectionStart, e = input.selectionEnd, sel = input.value.slice(s, e);
@@ -1027,8 +1038,11 @@ export function chatItems(id) {
   ];
   if (r.kind === 'dm') {
     const p = dmPeer(r), f = S.friends.get(p), fr = !!(f && f.state === 'friend'), bl = isBlocked(p);
+    // вместе в голосе — громкость друга сразу под ником (как правый клик по плитке в звонке)
+    const vr = Object.keys(S.voices).find(k => voiceIn(k)[p] && voiceIn(k)[myId()]);
     return [
-      { head: nickOf(p), sub: bl ? 'заблокирован' : isOnline(p) ? 'в сети' : 'не в сети', img: avaOf(p) },
+      { head: nickOf(p), sub: bl ? 'заблокирован' : vr ? 'в голосе с тобой' : isOnline(p) ? 'в сети' : 'не в сети', img: avaOf(p) },
+      ...(vr ? [{ range: { min: 0, max: 200, step: 5, value: volOf(p), on: v => setVol(p, v) }, label: 'Громкость', icon: 'volume-2' }, { label: 'Заглушить', check: mutedFor(p), fn: () => setMute(p, !mutedFor(p)) }, '-'] : []),
       S.cur !== id ? { icon: 'message-circle', label: 'Открыть чат', fn: () => openChat(id, { focus: true }) } : null,
       { icon: 'user-round', label: 'Профиль', fn: () => bus.emit('open-profile', p) },
       { icon: 'phone', label: 'Позвонить', disabled: !fr || bl, fn: async () => { await openChat(id); bus.emit('call', id); } },
@@ -1054,7 +1068,7 @@ export function chatItems(id) {
   return [
     { head: r.name || 'группа', sub: r.pending ? 'ищу участников…' : `${n} ${plural(n, 'участник', 'участника', 'участников')}` },
     S.cur !== id ? { icon: 'message-circle', label: 'Открыть чат', fn: () => openChat(id, { focus: true }) } : null,
-    r.voice && !r.pending ? { icon: 'mic', label: 'Зайти в голос', fn: () => bus.emit('voice-join', id) } : null,
+    r.voice && !r.pending ? { icon: 'phone', label: 'Зайти в голос', fn: () => bus.emit('voice-join', id) } : null,
     (r.invite === 'all' || r.admin) && !r.pending ? { icon: 'user-round-plus', label: 'Пригласить', fn: () => openW('gset', { room: id, tab: 'invite' }) } : null,
     { icon: 'settings', label: 'Настройки группы', fn: () => openW('gset', { room: id }) },
     { icon: 'film', label: 'Клипы и скрины', fn: () => openW('media', { room: id }) },
@@ -1064,6 +1078,7 @@ export function chatItems(id) {
   ];
 }
 onCtx('.js-chats [data-chat], .js-pgroups [data-chat]', el => chatItems(el.dataset.chat));
+onCtx('.js-chats [data-dm]', el => personItems(el.dataset.dm));
 onCtx('.pane.chat .ph', () => S.cur ? chatItems(S.cur) : null);
 
 /* ---------- «печатает…» ---------- */
@@ -1112,7 +1127,8 @@ bus.on('msg', async (room, m) => {
   if (r && r.muted && !ment) return;
   if (r && r.kind === 'group' && prefs.mentionsOnly && !ment) return;
   notify({ tone: ment ? 'mention' : 'msg', say: `${nickOf(m.from)} ${ment ? 'зовёт тебя' : 'пишет'}${r && r.kind === 'group' ? ' в ' + r.name : ''}` });
-  if (!document.hidden) {
+  // «не беспокоить» — без звуков и всплывашек (непрочитанное в списке всё равно видно)
+  if (!document.hidden && !dnd()) {
     const what = m.kind === 'text' ? plain(m.text).slice(0, 90) : m.kind === 'sticker' ? 'стикер' : m.kind === 'image' ? '🖼 картинка' : '📎 файл';
     toast({ ava: avaOf(m.from), icon: ment ? 'at-sign' : 'message-circle', title: nickOf(m.from) + (r && r.kind === 'group' ? ' · ' + r.name : ''), sub: what, dur: 5000, cls: 'msgt', actions: [{ label: 'Открыть', cls: 'gbtn', fn: () => openChat(room, { focus: true }) }] });
   }

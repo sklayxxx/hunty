@@ -55,7 +55,7 @@ P.on('pageerror', e => errs.push('pageerror: ' + e.message));
 P.on('response', r => { if (r.status() >= 400) errs.push(r.status() + ' ' + r.url().replace(/^https?:\/\/[^/]+/, '')); });
 await P.goto('http://127.0.0.1:8481/?ws=7481&noboot'); await sleep(2000);
 const shot = async (n, f) => { if (only && !only.split(',').some(o => n.includes(o))) return; try { await f(); await sleep(450); await P.screenshot({ path: SHOTS + 'look-' + n + '.png' }); console.log('✓', n); } catch (e) { console.log('✗', n, e.message.split('\n').filter(l => /intercept|waiting|✗|Timeout|not visible|resolved/.test(l)).slice(0, 5).join(' | ')); } await P.keyboard.press('Escape').catch(() => {}); await P.keyboard.press('Escape').catch(() => {}); await sleep(250); };
-const openChat = async name => { await P.click('.stab[data-tab="chats"]'); await P.locator('.js-chats .ci').filter({ has: P.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
+const openChat = async name => { await P.locator('.js-chats .ci').filter({ has: P.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
 if (process.env.DEAD) {
   const { deadScan } = await import('./dead.mjs');
   await openChat('vasyan'); await deadScan(P, ctx, 'лс');
@@ -71,10 +71,10 @@ await shot('3-group', async () => { await P.click('.sbar [data-win="group"]'); }
 await shot('4-stk', async () => { await openChat('vasyan'); await P.click('.js-stkb'); await sleep(300); });
 await shot('4b-emo', async () => { await P.keyboard.press('Escape'); await P.click('.js-emo'); await sleep(300); });
 await shot('4c-hover', async () => { await P.keyboard.press('Escape'); await P.locator('.log:not([hidden]) .m[data-id]').nth(2).hover(); });
-await shot('5-menu-person', async () => { await P.click('.stab[data-tab="friends"]'); await sleep(300); await P.locator('.js-friends [data-prof]').first().click({ button: 'right' }); });
-await shot('6-friends', async () => { await P.click('.stab[data-tab="friends"]'); });
+await shot('5-menu-person', async () => { await openChat('vasyan'); await P.locator('.js-chead [data-prof]').first().click({ button: 'right' }); });
+await shot('6-friends', async () => { await P.keyboard.press('Escape'); await sleep(200); });
 await shot('7-groupchat', () => openChat('кухня'));
-await shot('8-chatmenu', async () => { await P.click('.stab[data-tab="chats"]'); await P.locator('.js-chats .ci').first().click({ button: 'right' }); });
+await shot('8-chatmenu', async () => { await P.locator('.js-chats .ci').first().click({ button: 'right' }); });
 for (const t of ['acc', 'audio', 'look', 'keys', 'notif', 'priv', 'net', 'about']) await shot('9-set-' + t, async () => { await P.click('button.ib[data-win="settings"]'); await P.waitForSelector('.win[data-win="settings"].on'); await P.click(`.js-snav [data-tab="${t}"]`); });
 await shot('11-micmenu', async () => { await P.keyboard.press('Escape'); await P.click('.js-memicx'); });
 await shot('12-tabmenu', async () => { await P.keyboard.press('Escape'); await P.locator('.js-nav .ws[data-chat]').first().click({ button: 'right' }); });

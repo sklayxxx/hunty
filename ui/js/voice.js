@@ -88,7 +88,7 @@ function pcFor(peer) {
   if (V.track) P.micTx = pc.addTrack(V.track, V.micS);
   else P.micTx = pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
   if (V.camS) P.camTx = pc.addTrack(V.camS.getVideoTracks()[0], V.camS);
-  if (V.scrS) P.scrTx = V.scrS.getTracks().map(t => pc.addTrack(t, V.scrS));
+  if (V.scrS) addScreen(P);
   pc.onnegotiationneeded = async () => {
     try { P.makingOffer = true; await pc.setLocalDescription(); sig(P, { t: 'd', d: pc.localDescription.toJSON() }); }
     catch (e) { console.warn('offer', e); } finally { P.makingOffer = false; }
@@ -130,16 +130,115 @@ function closePeer(peer) {
 }
 async function applyBitrate(P) {
   try {
-    const s = P.micTx; if (s && s.track) { const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}]; p.encodings[0].maxBitrate = (+prefs.bitrate || 64) * 1000; await s.setParameters(p); }
-    for (const tx of P.scrTx || []) {
-      if (!tx.track || tx.track.kind !== 'video') continue;
-      const p = tx.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-      const res = +prefs.shareRes || 1080; p.encodings[0].maxBitrate = (res >= 1440 ? 8 : res >= 1080 ? 5 : 2.5) * 1e6;
-      p.degradationPreference = prefs.shareHint === 'motion' ? 'maintain-framerate' : 'maintain-resolution';
-      await tx.setParameters(p);
-    }
+    const s = P.micTx; if (s && s.track) { const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}]; p.encodings[0].maxBitrate = (+prefs.bitrate || 64) * 1000; p.encodings[0].priority = p.encodings[0].networkPriority = 'high'; await s.setParameters(p); }
   } catch (_) {}
+  for (const tx of P.scrTx || []) if (tx.track && tx.track.kind === 'video') await shareParams(tx, P.peer);
+  applyWatch(P);
 }
+/* ---------- демка: кодек, битрейт, «не ужимать» ----------
+   По умолчанию WebRTC шлёт 1080p не больше ~2.5 Мбит/с и при нагрузке на проц сам режет картинку до 720p
+   и ниже. Поэтому: битрейт под выбранное качество, видеокарта кодирует сама (если умеет), разрешение
+   и fps держим, а не ужимаем молча. Что реально уходит — видно в плашке «Ты показываешь экран». */
+const SHARE_MBIT = { 720: 3.5, 1080: 6, 1440: 10 };
+export function shareProfile(res = +prefs.shareRes || 1080, fps = +prefs.shareFps || 30) {
+  const base = SHARE_MBIT[res] || (res > 1080 ? 10 : res > 720 ? 6 : 3.5);
+  const motion = prefs.shareHint === 'motion' || fps >= 50;
+  return { res, fps, motion, maxBitrate: Math.round(base * (fps >= 50 ? 1.5 : fps <= 15 ? .7 : 1) * 1e6) };
+}
+async function shareParams(tx, peer) {
+  const q = shareProfile();
+  const set = async deg => {
+    const p = tx.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    const e = p.encodings[0];
+    e.maxBitrate = q.maxBitrate; e.maxFramerate = q.fps; e.scaleResolutionDownBy = 1; e.priority = e.networkPriority = 'high';
+    if (peer) e.active = watchesMe(peer);
+    p.degradationPreference = deg;
+    await tx.setParameters(p);
+  };
+  // 60 fps и «плавно» — держим и разрешение, и кадры (новый Chrome/WebView2); не умеет — держим разрешение
+  for (const deg of q.motion ? ['maintain-framerate-and-resolution', 'maintain-resolution'] : ['maintain-resolution']) {
+    try { await set(deg); return; } catch (e) { if (deg === 'maintain-resolution') console.warn('share params', e); }
+  }
+}
+/* ---------- демку получают только те, кто её реально смотрит ----------
+   В P2P у каждого зрителя свой кодировщик и своя копия потока. Кто не смотрит (свернул Hunty, смотрит чужую
+   демку, нажал «Не смотреть») — его копия на паузе: меньше нагрузка на проц/видеокарту и на исходящий интернет.
+   Зритель сам говорит, чью демку смотрит (ev «watch»); нет записи — старая версия Hunty, шлём как раньше. */
+V.watch = new Map(); // peer → чью демку смотрит ('' — ничью)
+export const watchesMe = p => !V.watch.has(p) || V.watch.get(p) === myId();
+/** кто смотрит демку sharer (для «смотрят: …») */
+export const watchersOf = sharer => Object.keys(voiceIn(V.room)).filter(p => p !== sharer && p !== myId() && (!V.watch.has(p) || V.watch.get(p) === sharer));
+async function applyWatch(P) {
+  const on = watchesMe(P.peer);
+  for (const tx of P.scrTx || []) {
+    if (!tx.track) continue;
+    try {
+      const p = tx.getParameters(); if (!p.encodings || !p.encodings.length) continue;
+      if (p.encodings.every(e => e.active !== false) === on) continue;
+      p.encodings.forEach(e => { e.active = on; }); await tx.setParameters(p);
+    } catch (e) { console.warn('watch', e); }
+  }
+}
+bus.on('ev:watch', v => {
+  if (!V.room || v.room !== V.room || !v.from || v.from === myId()) return;
+  const was = V.watch.get(v.from), now = String((v.data && v.data.p) || '');
+  V.watch.set(v.from, now); if (was === now) return;
+  const P = V.peers.get(v.from); if (P) applyWatch(P);
+  bus.emit('watch', v.from); syncShareBar();
+});
+bus.on('voice', (room, peer, st) => { if (peer && !st && V.watch.delete(peer)) bus.emit('watch', peer); });
+bus.on('vleft', () => V.watch.clear());
+/* видеокарта умеет кодировать (NVENC/AMF/QuickSync)? — тогда кодирует она: проц свободен, кадры не теряются */
+const hwMemo = new Map();
+function hwCodec(res, fps) {
+  const k = res + '@' + fps; if (hwMemo.has(k)) return hwMemo.get(k);
+  const w = Math.round(res * 16 / 9), br = shareProfile(res, fps).maxBitrate;
+  const p = (async () => {
+    const mc = navigator.mediaCapabilities; if (!mc || !mc.encodingInfo || !window.RTCRtpReceiver || !RTCRtpReceiver.getCapabilities) return '';
+    const have = ((RTCRtpReceiver.getCapabilities('video') || {}).codecs || []).map(c => c.mimeType.toLowerCase());
+    for (const mime of ['video/H264', 'video/AV1', 'video/VP9']) {
+      if (!have.includes(mime.toLowerCase())) continue;
+      try { const r = await mc.encodingInfo({ type: 'webrtc', video: { contentType: mime, width: w, height: res, bitrate: br, framerate: fps } }); if (r && r.supported && r.powerEfficient) return mime; } catch (_) {}
+    }
+    return '';
+  })();
+  hwMemo.set(k, p); return p;
+}
+function preferCodec(P, tx, mime) {
+  if (!mime) return;
+  try {
+    const tr = P.pc.getTransceivers().find(t => t.sender === tx); if (!tr || !tr.setCodecPreferences) return;
+    const all = (RTCRtpReceiver.getCapabilities('video') || {}).codecs || [];
+    const want = all.filter(c => c.mimeType.toLowerCase() === mime.toLowerCase()).sort((a, b) => /packetization-mode=1/.test(b.sdpFmtpLine || '') - /packetization-mode=1/.test(a.sdpFmtpLine || ''));
+    if (want.length) tr.setCodecPreferences([...want, ...all.filter(c => !want.includes(c))]);
+  } catch (e) { console.warn('codec', e); }
+}
+function addScreen(P) {
+  P.scrTx = V.scrS.getTracks().map(t => P.pc.addTrack(t, V.scrS));
+  const vt = P.scrTx.find(tx => tx.track && tx.track.kind === 'video');
+  if (vt) { preferCodec(P, vt, V.scrCodec); shareParams(vt); }
+  setTimeout(() => applyBitrate(P), 1500);
+}
+/* что реально уходит друзьям: разрешение, fps, кодек, во что упирается — раз в 2 с, пока показываешь */
+export const shareStat = { h: 0, fps: 0, codec: '', hw: false, lim: '', n: 0 };
+setInterval(async () => {
+  if (!V.share || !V.scrS) return;
+  let h = 0, fps = 0, codec = '', hw = false, lim = '', n = 0;
+  for (const P of V.peers.values()) {
+    const tx = (P.scrTx || []).find(t => t.track && t.track.kind === 'video'); if (!tx || !watchesMe(P.peer)) continue; // не смотрит — копия на паузе
+    try {
+      const st = await tx.getStats(); let o = null; const codecs = {};
+      st.forEach(x => { if (x.type === 'outbound-rtp' && x.kind === 'video' && (!o || (x.frameHeight || 0) > (o.frameHeight || 0))) o = x; if (x.type === 'codec') codecs[x.id] = x; });
+      if (!o || !o.frameHeight) continue;
+      n++; h = h ? Math.min(h, o.frameHeight) : o.frameHeight; fps = fps ? Math.min(fps, o.framesPerSecond || 0) : (o.framesPerSecond || 0);
+      const c = codecs[o.codecId]; if (c) codec = c.mimeType.split('/')[1];
+      hw = hw || o.powerEfficientEncoder === true || /mediafoundation|nvenc|vaapi|videotoolbox|hardware|D3D|AMF|QSV/i.test(o.encoderImplementation || '');
+      if (o.qualityLimitationReason && o.qualityLimitationReason !== 'none') lim = o.qualityLimitationReason;
+    } catch (_) {}
+  }
+  Object.assign(shareStat, { h, fps: Math.round(fps), codec, hw, lim, n });
+  syncShareBar(); bus.emit('sharestat');
+}, 2000);
 function onTrack(P, e) {
   const st = e.streams[0] || new MediaStream([e.track]);
   const k = st.id === P.kinds.scr ? 'scr' : st.id === P.kinds.cam ? 'cam' : e.track.kind === 'audio' ? 'mic' : 'cam';
@@ -307,15 +406,9 @@ export function setMini(on, manual) {
   if (!V.mini) tmsg('ok', 'звонок развёрнут'); else if (manual) tmsg('ok', 'звонок свёрнут · окошко можно таскать');
 }
 function syncJoin() {
-  const r = S.rooms.get(S.cur);
-  if (!V.room) {
-    const ok = r && r.kind === 'group' && r.voice && !r.pending;
-    vjoin.hidden = !ok; if (!ok) return;
-    const n = voiceCount(r.id);
-    vjoin.className = 'vjoin js-vjoin';
-    vjoin.innerHTML = n ? `${ic('mic')}<span class="n">${n}</span><span class="vj-t">в голосе</span><span class="vj-go">Зайти</span>` : `${ic('mic')}<span class="vj-t">голос свободен</span><span class="vj-go">Зайти</span>`;
-    vjoin.setAttribute('aria-label', `Зайти в голос «${r.name}», там ${n}`); vjoin.title = `Голос «${r.name}»`;
-  } else if (V.mini) {
+  // «Зайти» в голос группы — только трубкой в шапке чата; сверху остаётся лишь свёрнутый звонок (вернуться в него)
+  if (!V.room) vjoin.hidden = true;
+  else if (V.mini) {
     vjoin.hidden = false; vjoin.className = 'vjoin min js-vjoin';
     vjoin.innerHTML = `<span class="vj-dot"></span><span class="vj-t">${esc(roomLabel(V.room))}</span><span class="n js-up">${dur((Date.now() - V.since) / 1000)}</span>${ic('maximize-2')}`;
     vjoin.setAttribute('aria-label', 'Развернуть звонок'); vjoin.title = 'Развернуть звонок';
@@ -459,7 +552,8 @@ function vuLoop(ts) {
   if (ts - vuT < 60) return; const dt = vuT ? ts - vuT : 60; vuT = ts;
   const put = (peer, l) => {
     const talk = l > .02, el = tiles.get(peer);
-    if (el) { el.classList.toggle('talking', talk); el.style.setProperty('--lv', Math.min(1, l * 6).toFixed(2)); }
+    // --lv нужен только обводке «говорит»; шаг 0.1 — меньше пересчётов стиля и перерисовок (16 раз в секунду на каждого)
+    if (el) { el.classList.toggle('talking', talk); if (talk) { const v = (Math.round(Math.min(1, l * 6) * 10) / 10).toFixed(1); if (el._lv !== v) { el._lv = v; el.style.setProperty('--lv', v); } } }
     const im = $(`.js-mav img[data-u="${CSS.escape(peer)}"]`); if (im) im.classList.toggle('talking', talk);
     if (talk) bus.emit('talk', peer);
   };
@@ -519,20 +613,30 @@ export const toggleShare = () => { if (!V.room) { tmsg('warn', 'экран по�
 shareB.addEventListener('click', toggleShare);
 
 /* ---------- вебка ---------- */
+const camC = () => { const h = +prefs.camRes || 720, c = { height: { ideal: h }, width: { ideal: Math.round(h * 16 / 9) }, frameRate: { ideal: 30 } }; if (prefs.camId) c.deviceId = { ideal: prefs.camId }; return c; };
 export async function camStart() {
   if (!V.room) { tmsg('warn', 'вебка работает в голосе — сначала зайди'); return; }
-  const h = +prefs.camRes || 720;
-  try {
-    const c = { height: { ideal: h }, width: { ideal: Math.round(h * 16 / 9) }, frameRate: { ideal: 30 } };
-    if (prefs.camId) c.deviceId = { ideal: prefs.camId };
-    V.camS = await navigator.mediaDevices.getUserMedia({ video: c });
-  } catch (e) { tmsg('err', 'вебка недоступна: ' + (e.message || e.name)); return; }
+  try { V.camS = await navigator.mediaDevices.getUserMedia({ video: camC() }); }
+  catch (e) { tmsg('err', 'вебка недоступна: ' + (e.message || e.name)); return; }
   V.cam = true; sendMetaAll();
   const t = V.camS.getVideoTracks()[0];
   for (const P of V.peers.values()) P.camTx = P.pc.addTrack(t, V.camS);
   t.onended = () => camStop();
   bus.emit('media', myId(), 'cam', V.camS); syncCtrl(); renderRows(); pushState();
   tmsg('ok', 'вебка включена · видят все в голосе');
+}
+/* качество или камеру сменили в настройках, пока вебка включена, — меняем на лету, друзья видят сразу */
+async function camRe(dev) {
+  const s = V.camS, old = s && s.getVideoTracks()[0]; if (!old) return;
+  const c = camC();
+  if (!dev) { const { deviceId, ...q } = c; try { await old.applyConstraints(q); renderRows(); return; } catch (_) {} } // не вышло — откроем камеру заново
+  let t; try { t = (await navigator.mediaDevices.getUserMedia({ video: c })).getVideoTracks()[0]; }
+  catch (e) { tmsg('err', 'вебка недоступна: ' + (e.message || e.name)); return; }
+  if (V.camS !== s) { t.stop(); return; } // пока открывали — выключил вебку
+  for (const P of V.peers.values()) if (P.camTx) P.camTx.replaceTrack(t).catch(() => {});
+  old.onended = null; s.removeTrack(old); old.stop(); s.addTrack(t); t.onended = () => camStop();
+  document.querySelectorAll('video').forEach(v => { if (v.srcObject === s) { v.srcObject = null; v.srcObject = s; v.play().catch(() => {}); } });
+  bus.emit('media', myId(), 'cam', s); renderRows();
 }
 export function camStop(silent) {
   if (!V.camS) return;
@@ -547,6 +651,7 @@ export async function startShare(o = {}) {
   if (!V.room) { tmsg('warn', 'экран показывают в голосе — сначала зайди'); return; }
   const h = +(o.res || prefs.shareRes) || 1080, fps = +(o.fps || prefs.shareFps) || 30;
   const wantAudio = o.audio ?? !!prefs.shareAudio;
+  const codecP = hwCodec(h, fps); // пока выбираешь экран — узнаём, умеет ли видеокарта
   let s, hint = null;
   // системное окно выбора экрана иногда открывается позади Hunty — тогда кажется, что всё зависло
   const hintT = setTimeout(() => { hint = toast({ icon: 'monitor-up', title: 'Выбери, что показать', sub: 'Окно выбора экрана открыто. Не видно — нажми Alt+Tab, оно могло спрятаться за Hunty', dur: 12000 }); }, 4000);
@@ -562,9 +667,12 @@ export async function startShare(o = {}) {
   if (!V.room) { s.getTracks().forEach(t => t.stop()); return; } // пока выбирал — вышел из голоса
   if (V.share) stopShare(true);
   V.scrS = s; V.share = true; V.drawOk = o.draw ?? (prefs.shareDraw !== 'none');
-  const vt0 = s.getVideoTracks()[0]; if (vt0) { vt0.contentHint = prefs.shareHint === 'motion' ? 'motion' : 'detail'; vt0.onended = () => stopShare(); }
+  const vt0 = s.getVideoTracks()[0]; if (vt0) { vt0.contentHint = shareProfile(h, fps).motion ? 'motion' : 'detail'; vt0.onended = () => stopShare(); }
+  V.scrCodec = await codecP.catch(() => '');
+  if (!V.room || V.scrS !== s) return;
+  Object.assign(shareStat, { h: 0, fps: 0, codec: '', hw: false, lim: '', n: 0 });
   sendMetaAll();
-  for (const P of V.peers.values()) { P.scrTx = s.getTracks().map(t => P.pc.addTrack(t, s)); setTimeout(() => applyBitrate(P), 1500); }
+  for (const P of V.peers.values()) addScreen(P);
   bus.emit('media', myId(), 'scr', s); syncCtrl(); renderRows(); pushState();
   api('ev', { room: V.room, kind: 'share', data: { on: true, draw: V.drawOk } }).catch(() => {});
   tmsg('ok', `ты показываешь экран · ${vt0 && vt0.getSettings().height || h}p${s.getAudioTracks().length ? ' со звуком' : ''} · ${V.drawOk ? 'рисовать можно всем' : 'рисовать нельзя'}`);
@@ -574,8 +682,12 @@ export async function startShare(o = {}) {
 const sbar = $('.js-sharebar');
 function syncShareBar() {
   const on = !!(V.share && V.room); sbar.hidden = !on; app.classList.toggle('sharing', on); if (!on) return;
-  const n = Math.max(0, voiceCount(V.room) - 1), t = V.scrS && V.scrS.getVideoTracks()[0], st = t ? t.getSettings() : {};
-  $('.js-sbsub', sbar).textContent = (n ? `видят ${n} · ` : 'пока никто не смотрит · ') + (st.height ? st.height + 'p' : '') + (V.scrS && V.scrS.getAudioTracks().length ? ' · со звуком' : '');
+  const n = watchersOf(myId()).length, t = V.scrS && V.scrS.getVideoTracks()[0], st = t ? t.getSettings() : {}, q = shareStat;
+  // друзьям уходит q.h/q.fps (из статистики WebRTC); пока никто не смотрит — что захватывается с экрана
+  const h = q.n ? q.h : st.height, f = q.n ? q.fps : Math.round(st.frameRate || 0);
+  const lim = q.lim === 'bandwidth' ? ' · упирается в интернет' : q.lim === 'cpu' ? ' · упирается в процессор' : '';
+  $('.js-sbsub', sbar).textContent = (n ? `видят ${n} · ` : 'пока никто не смотрит · ') + (h ? h + 'p' : '') + (f ? ' · ' + f + ' fps' : '') + (q.n && q.codec ? ' · ' + q.codec + (q.hw ? ' на видеокарте' : '') : '') + lim + (V.scrS && V.scrS.getAudioTracks().length ? ' · со звуком' : '');
+  sbar.title = lim ? (q.lim === 'bandwidth' ? 'Интернет не тянет выбранное качество — WebRTC снижает его сам. Помогает 720p или 30 fps.' : 'Процессор не успевает кодировать — помогает 30 fps или 720p, или видеокарта с аппаратным кодеком.') : '';
 }
 $('.js-sbstop', sbar).addEventListener('click', () => stopShare());
 /* окно «Запустить демку» */
@@ -607,12 +719,16 @@ export async function setShareQ(res, fps) {
   try { await t.applyConstraints({ height: { ideal: res, max: res }, frameRate: { ideal: fps, max: fps } }); }
   catch (_) { tmsg('warn', 'такое качество экран не тянет — оставил как было'); return; }
   setPref('shareRes', res); setPref('shareFps', fps);
+  t.contentHint = shareProfile(res, fps).motion ? 'motion' : 'detail';
   V.peers.forEach(applyBitrate); syncShareBar(); bus.emit('shareq');
   const st = t.getSettings(); tmsg('ok', `качество показа: ${st.height || res}p · ${Math.round(st.frameRate || fps)} fps · друзья видят сразу`);
 }
 
 /* ---------- события голоса от ядра ---------- */
 bus.on('voice', (room, peer, st, had) => {
+  // bus.emit('voice', room) без человека — просто «перерисуй»: это не «друг вышел» (иначе звонок в личке сам вешался,
+  // когда звонишь ещё раз или друг появляется в сети, пока ты ждёшь его в звонке)
+  if (!peer) { if (room === V.room) renderRows(); layout(); return; }
   if (peer === myId()) { if (room === V.room && !st && V.room) { /* ядро выкинуло */ } layout(); return; }
   if (room === V.room) {
     if (st && !had) { pcFor(peer); sfx('pjoin'); tmsg('ok', `${nickOf(peer)} зашёл в голос`, true); }
@@ -637,6 +753,10 @@ bus.on('pref', k => {
   if (['micId', 'nsMode', 'ec', 'agc'].includes(k) && V.room) micRestart();
   if (k === 'bitrate') V.peers.forEach(applyBitrate);
   if (k === 'ptt') applyMic();
+  if ((k === 'camRes' || k === 'camId') && V.camS) camRe(k === 'camId');
+  // сменили в настройках во время демки: режим — сразу в кодек, «кто рисует» — сразу всем в звонке
+  if (k === 'shareHint' && V.scrS) { const t = V.scrS.getVideoTracks()[0]; if (t) t.contentHint = shareProfile(+prefs.shareRes || 1080, Math.round(t.getSettings().frameRate || 0) || +prefs.shareFps || 30).motion ? 'motion' : 'detail'; V.peers.forEach(applyBitrate); }
+  if (k === 'shareDraw' && V.share && V.room) { V.drawOk = prefs.shareDraw !== 'none'; api('ev', { room: V.room, kind: 'share', data: { on: true, draw: V.drawOk } }).catch(() => {}); }
 });
 bus.on('peer-vol', () => { applyVolAll(); renderRows(); });
 bus.on('room_removed', room => { if (room === V.room) leave({ silent: true }); });
@@ -670,9 +790,10 @@ async function ring(room, p, back) {
   sfx('ringback'); bus.emit('voice', room); renderRows();
 }
 // друг, которого я жду в звонке, появился в сети — звоню ему
-bus.on('presence', (peer, on) => {
+bus.on('presence', (peer, on, was) => {
   if (!on || !V.room || ringOut) return;
   const r = S.rooms.get(V.room); if (!r || r.kind !== 'dm' || dmPeer(r) !== peer || voiceIn(V.room)[peer]) { if (r && r.kind === 'dm') renderRows(); return; }
+  if (was) return; // и так был в сети — это просто свежий пинг, а не «появился»: не перезваниваю сам каждые полминуты
   const room = V.room; renderRows();
   setTimeout(() => { if (V.room === room && !ringOut && isOnline(peer) && !voiceIn(room)[peer]) ring(room, peer, true); }, 1500);
 });
@@ -702,7 +823,13 @@ function hangOut(why) {
   if (why === 'answered') return;
   api('ev', { room, kind: 'ring_stop', data: { why } }).catch(() => {});
   if (why === 'timeout' || why === 'declined') sfx('hangup');
-  if (why === 'timeout') { tmsg('warn', `${nickOf(peer)} не ответил`); api('send', { room, kind: 'sys', text: 'missed' }).then(m => import('./state.js').then(s => s.pushLocal(m))).catch(() => {}); }
+  if (why === 'timeout') {
+    // не вешаю трубку: звонок перестаёт звенеть, а ты остаёшься в звонке и ждёшь сколько угодно —
+    // у друга висит «ждёт тебя в звонке», и можно позвонить ещё раз кнопкой на сцене
+    api('send', { room, kind: 'sys', text: 'missed' }).then(m => import('./state.js').then(s => s.pushLocal(m))).catch(() => {});
+    if (V.room === room) { tmsg('warn', `${nickOf(peer)} пока не ответил — ты в звонке, ждём · «Позвонить ещё раз» — на сцене`); bus.emit('voice', room); renderRows(); return; }
+    tmsg('warn', `${nickOf(peer)} не ответил`);
+  }
   if (why === 'declined') tmsg('warn', `${nickOf(peer)} сбросил звонок`);
   if (why === 'left') return;
   if (V.room === room) leave({ silent: true, logCall: false });
@@ -715,8 +842,8 @@ bus.on('ev:ring', v => {
   const p = v.from; let n = 0;
   const t = toast({ ava: avaOf(p), icon: 'phone', title: `${nickOf(p)} звонит`, sub: 'личка · напрямую P2P', tag: '30 сек', cd: 30, cls: 'ring',
     actions: [{ label: 'Ответить', cls: 'cbtn', fn: () => { stopRing(v.room); openChat(v.room); join(v.room); } }, { label: 'Сбросить', cls: 'gbtn', fn: () => { stopRing(v.room); declined.set(v.room, Date.now()); api('ev', { room: v.room, kind: 'ring_stop', data: { why: 'declined' } }).catch(() => {}); } }],
-    onTimeout: () => stopRing(v.room) });
-  const iv = setInterval(() => { if (++n > 12) { stopRing(v.room); return; } sfx('ring'); }, 2500);
+    onTimeout: () => { stopRing(v.room); waitingFor(v.room, p); } });
+  const iv = setInterval(() => { if (++n > 12) { stopRing(v.room); waitingFor(v.room, p); return; } sfx('ring'); }, 2500);
   ringIn.set(v.room, { t, iv });
   notify({ tone: 'ring', say: `${nickOf(p)} звонит`, force: true });
 });
@@ -724,7 +851,7 @@ function stopRing(room) { const x = ringIn.get(room); if (!x) return; ringIn.del
 bus.on('ev:ring_stop', v => {
   stopRing(v.room);
   if (ringOut && ringOut.room === v.room && v.data && v.data.why === 'declined') hangOut('declined');
-  else if (v.data && v.data.why === 'timeout') tmsg('warn', `пропущенный звонок от ${nickOf(v.from)}`);
+  else if (v.data && v.data.why === 'timeout') { tmsg('warn', `пропущенный звонок от ${nickOf(v.from)}`); waitingFor(v.room, v.from); } // друг остался в звонке и ждёт
 });
 bus.on('call', room => call(room));
 bus.on('hang', () => { if (ringOut) hangOut('cancel'); else leave(); });
@@ -792,7 +919,7 @@ function voiceItems(p) {
 }
 onCtx('.vr[data-u], .vtile[data-u]', el => voiceItems(el.dataset.u));
 onCtx('.vtile.wait[data-wait]', el => personItems(el.dataset.wait));
-onCtx('.js-mav img[data-u]', el => voiceItems(el.dataset.u));
+onCtx('.js-mav img[data-u], .js-wav img[data-u], .js-dsw .dswb[data-u]', el => voiceItems(el.dataset.u));
 let nudgeT = 0;
 export async function nudge(peer, room) {
   room = room || V.room || (S.friends.get(peer) || {}).dm || '';

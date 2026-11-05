@@ -7,7 +7,7 @@ import { onCtx, openMenu } from './menu.js';
 import { tmsg, openW } from './ui.js';
 import { flip, still, zoomOf, SOFT } from './motion.js';
 
-const nav = $('.js-nav'), plus = $('.ws.plus', nav);
+const nav = $('.js-nav'), navs = $('.js-navs'), plus = $('.ws.plus', nav);
 const MAXT = 8, closed = [];
 const pins = () => (prefs.pinned || []).filter(id => S.rooms.has(id));
 export const isPinned = id => (prefs.pinned || []).includes(id);
@@ -66,7 +66,7 @@ nav.addEventListener('click', e => {
 });
 nav.addEventListener('mousedown', e => { if (e.button === 1 && e.target.closest('.ws[data-chat]')) e.preventDefault(); }); // без автопрокрутки
 nav.addEventListener('auxclick', e => { const b = e.button === 1 && e.target.closest('.ws[data-chat]'); if (b) { e.preventDefault(); closeTab(b.dataset.chat); } });
-nav.addEventListener('wheel', e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && nav.scrollWidth > nav.clientWidth) { nav.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+navs.addEventListener('wheel', e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && navs.scrollWidth > navs.clientWidth) { navs.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
 // «+» — открыть ещё чат или создать группу
 plus.removeAttribute('data-win');
 plus.addEventListener('click', e => {

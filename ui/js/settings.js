@@ -7,7 +7,7 @@ import { avaURL, mobName, randomMob, MOBKEYS, MOBS, mobURL } from './mobs.js';
 import { cardHTML, BANNERS, bannerBg, isImg, isColor, shrinkImage } from './card.js';
 import { openMenu } from './menu.js';
 import { app, tmsg, tone, TONES, toast, closeToast, fail, openW, closeW, OPEN, CLOSE, segSet, rgv, actx, ttsVoices, speak, fit, winOpen, JOURNAL, copyText, sfx, SFX_CATS } from './ui.js';
-import { V, camStart, camStop } from './voice.js';
+import { V } from './voice.js';
 import { refreshCode, unblock } from './friends.js';
 import { clearRoom } from './chat.js';
 import { eggsText } from './eggs.js';
@@ -54,7 +54,7 @@ OPEN.settings = (_, o) => { syncPrefs(); syncCfg(); setTab(o.tab || tab); eggsTe
 CLOSE.settings = () => { stopMicTest(); stopCam(); clearInterval(netIv); };
 
 /* ---------- контролы ↔ prefs ---------- */
-const NUM = new Set(['micVol', 'outVol', 'ptt', 'bitrate', 'camRes', 'shareRes', 'shareFps', 'pinTtl', 'glassA', 'scale', 'notifVol', 'gateDb', 'msgSize', 'wallBlur', 'wallDim', 'sbVol', 'awayAfter', 'clipSec']);
+const NUM = new Set(['micVol', 'outVol', 'ptt', 'bitrate', 'camRes', 'shareRes', 'shareFps', 'pinTtl', 'glassA', 'glassBlur', 'scale', 'notifVol', 'gateDb', 'msgSize', 'wallBlur', 'wallDim', 'sbVol', 'awayAfter', 'clipSec']);
 const val = (k, v) => NUM.has(k) ? +v : v;
 export function syncPrefs() {
   $$('[data-pref]', sw).forEach(el => {
@@ -64,7 +64,7 @@ export function syncPrefs() {
     else if (el.type === 'range') { el.value = v; rgv(el); }
     else if (el.tagName === 'SELECT') { el.value = v ?? ''; if (el.value !== String(v ?? '')) el.value = ''; }
   });
-  dndSync(); sensSync(); pttSync(); wallRows(); sfxRows();
+  dndSync(); sensSync(); pttSync(); wallRows(); glassRows(); sfxRows();
   $('.js-camv').classList.toggle('mir', prefs.camMirror !== false);
 }
 sw.addEventListener('click', e => {
@@ -92,7 +92,6 @@ bus.on('pref', k => { if (k === 'sound') sfxCats.classList.toggle('off', !prefs.
 bus.on('pref', (k, v) => {
   if (k === 'scale') fit();
   if (k === 'camMirror') $('.js-camv').classList.toggle('mir', v !== false);
-  if ((k === 'camId' || k === 'camRes') && V.cam) { camStop(true); camStart(); }
   if ((k === 'camId' || k === 'camRes') && cam) { stopCam(); camTest(); }
   if (['micId', 'nsMode', 'ec', 'agc'].includes(k) && mt) { stopMicTest(); micTest(); }
   if (k === 'gate' || k === 'gateDb') sensSync();
@@ -100,10 +99,11 @@ bus.on('pref', (k, v) => {
   if (k === 'ptt' || k === 'pttKey' || k === 'keys') pttSync();
   if (k === 'fx') renderFx();
   if (k === 'wall') { renderWalls(); wallRows(); }
+  if (k === 'lite') glassRows();
   if (k === 'voiceName' || k === 'say') { if (prefs.say) speak('Привет, это голос уведомлений', true); }
 });
 
-/* «не беспокоить» — тот же статус, что внизу слева (me.js) */
+/* «не беспокоить» — тот же статус, что под списком друзей (me.js) */
 const dndSeg = $('.js-dnd');
 function dndSync() { const left = prefs.dnd && prefs.dnd > Date.now() ? (prefs.dnd - Date.now()) / 60000 : 0; segSet(dndSeg, left <= 0 ? '0' : left > 60 * 24 * 30 ? '-1' : left > 60 ? '480' : '60'); }
 dndSeg.addEventListener('click', e => { const b = e.target.closest('button'); if (b) bus.emit('dnd-set', +b.dataset.v); });
@@ -291,7 +291,20 @@ async function renderWalls() {
     + (img ? t('img', 'Своя', `#000 url('${img}') center/cover`, ' own') : '')
     + `<button type="button" class="wl add js-walladd"><i>${ic('image-plus')}</i><span>${img ? 'Другая' : 'Своя картинка'}</span></button>`;
 }
-function wallRows() { const w = prefs.wall || ''; $$('.js-wallrow', sw).forEach(r => { r.hidden = !w || w === 'glow'; }); $('.js-liverow', sw).hidden = w !== 'glow'; }
+// затемнение — для любых обоев, кроме чёрного и свечения; размытие — только для своей картинки (градиенты размывать нечего)
+function wallRows() {
+  const w = prefs.wall || '';
+  $$('.js-wallrow', sw).forEach(r => { r.hidden = !w || w === 'glow' || (r.classList.contains('js-wallblur') && w !== 'img'); });
+  $('.js-liverow', sw).hidden = w !== 'glow';
+}
+// в лёгком режиме стекла нет — его ползунки ничего не меняют, гасим их и говорим почему
+function glassRows() { const off = !!prefs.lite; $$('.js-glrow', sw).forEach(r => { r.classList.toggle('na', off); $$('input,button', r).forEach(c => { c.disabled = off; }); }); $('.js-glnote', sw).hidden = !off; }
+// пока тянешь ползунок стекла/обоев — затемнение под окном настроек убираем, чтобы было видно, что меняется
+let peekT = 0;
+sw.addEventListener('input', e => {
+  if (!['glassA', 'glassBlur', 'wallBlur', 'wallDim'].includes(e.target.dataset && e.target.dataset.pref)) return;
+  const b = sw.closest('.wback'); if (!b) return; b.classList.add('peek'); clearTimeout(peekT); peekT = setTimeout(() => b.classList.remove('peek'), 1600);
+});
 wallsEl.addEventListener('click', e => {
   if (e.target.closest('.js-walladd')) { wallFile.click(); return; }
   const b = e.target.closest('[data-w]'); if (!b) return;
@@ -564,7 +577,7 @@ $('.js-netbtn').addEventListener('click', async () => {
 });
 
 /* ---------- о программе и обновления ---------- */
-function about() { $('.js-ver').textContent = `v${S.version || '0.6.0'} · бесплатно навсегда`; }
+function about() { $('.js-ver').textContent = `v${S.version || '0.7.0'} · бесплатно навсегда`; }
 const cmpV = (a, b) => { const p = s => String(s).replace(/^v/, '').split(/[.-]/).map(x => +x || 0); const x = p(a), y = p(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
 export async function checkUpdate(silent) {
   const st = $('.js-updst');
@@ -618,8 +631,9 @@ async function runUpdate() {
   catch (e) { done(false, 'обновление: ' + (e.message || e)); }
 }
 $('.js-upd').addEventListener('click', () => checkUpdate(false));
-/* браузерный режим (Linux/macOS): у узла нет трея — выключаем кнопкой */
+/* браузерный режим (Linux/macOS): у узла нет трея — выключаем кнопкой; то, что умеет только приложение, — гасим */
 if (!inTauri) {
+  for (const k of ['gameScan', 'flash']) { const t = $(`input[data-pref="${k}"]`, sw); if (t) { t.disabled = true; t.closest('.row').classList.add('na'); t.closest('.row').title = 'только в приложении для Windows'; } }
   $$('.js-quitrow').forEach(e => { e.hidden = false; });
   $('.js-quit').addEventListener('click', () => { closeW(true); bus.emit('quitting'); quitNode(); });
 }

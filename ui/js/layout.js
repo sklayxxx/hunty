@@ -24,6 +24,8 @@ const G = {};
 });
 const gtip = document.createElement('div'); gtip.className = 'gtip'; gtip.hidden = true; gtip.setAttribute('aria-hidden', 'true'); document.body.appendChild(gtip);
 const inCall = () => !app.classList.contains('calm');
+/** список друзей справа (настройка «Список друзей») — щель слева от него, тянуть влево = шире */
+const sideR = () => R.classList.contains('sr') && !mobile();
 const focusOn = () => app.classList.contains('stfocus');
 function limits() {
   const W = tilesEl.clientWidth, H = tilesEl.clientHeight, g = gapPx();
@@ -34,7 +36,7 @@ const shDef = k => { const H = tilesEl.clientHeight || 700; return Math.round(k 
 const shNow = () => { const k = shKey(); return LAY[k] || shDef(k); };
 export function applyLay() {
   const L = limits(); const c1 = clamp(LAY.c1, ...L.c1);
-  app.style.setProperty('--c1', c1 + 'px');
+  app.style.setProperty('--c1', c1 + 'px'); R.style.setProperty('--c1', c1 + 'px'); // с html — для тостов, они вне .app
   app.style.setProperty('--sh', Math.round(clamp(shNow(), ...L.sh)) + 'px');
   requestAnimationFrame(placeGuts);
 }
@@ -42,7 +44,7 @@ function placeGuts() {
   const mob = mobile(), g = gapPx(), shOn = !mob && inCall() && !focusOn();
   G.c1.hidden = mob; G.sh.hidden = !shOn; if (mob) return;
   const set = (e, l, t, w, h) => { e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.height = h + 'px'; };
-  set(G.c1, listP.offsetLeft + listP.offsetWidth, listP.offsetTop, g, listP.offsetHeight);
+  set(G.c1, sideR() ? listP.offsetLeft - g : listP.offsetLeft + listP.offsetWidth, listP.offsetTop, g, listP.offsetHeight);
   if (shOn) set(G.sh, stageP.offsetLeft, stageP.offsetTop + stageP.offsetHeight, stageP.offsetWidth, g);
   const L = limits();
   [['c1', listP.offsetWidth], ['sh', stageP.offsetHeight]].forEach(([k, v]) => { G[k].setAttribute('aria-valuemin', L[k][0]); G[k].setAttribute('aria-valuemax', Math.round(L[k][1])); G[k].setAttribute('aria-valuenow', Math.round(v)); });
@@ -59,7 +61,7 @@ tilesEl.addEventListener('pointerdown', e => {
 tilesEl.addEventListener('pointermove', e => {
   if (!gd || e.pointerId !== gd.id) return;
   const dx = (e.clientX - gd.x) / gd.z, dy = (e.clientY - gd.y) / gd.z, L = limits();
-  if (gd.k === 'c1') LAY.c1 = Math.round(clamp(gd.c1 + dx, ...L.c1));
+  if (gd.k === 'c1') LAY.c1 = Math.round(clamp(gd.c1 + (sideR() ? -dx : dx), ...L.c1));
   if (gd.k === 'sh') LAY[shKey()] = Math.round(clamp(gd.sh + dy, ...L.sh));
   applyLay(); tipAt(e.clientX, e.clientY, gd.k);
 });
@@ -79,7 +81,7 @@ tilesEl.addEventListener('keydown', e => {
   const g = e.target.closest('.gut'); if (!g) return;
   const k = g.dataset.k, st = e.shiftKey ? 48 : 16, L = limits(), cur0 = sizeOf(k); let v = null;
   if (k === 'sh') { if (e.key === 'ArrowDown') v = cur0 + st; if (e.key === 'ArrowUp') v = cur0 - st; }
-  else { if (e.key === 'ArrowRight') v = cur0 + st; if (e.key === 'ArrowLeft') v = cur0 - st; }
+  else { const wider = sideR() ? 'ArrowLeft' : 'ArrowRight', narrower = sideR() ? 'ArrowRight' : 'ArrowLeft'; if (e.key === wider) v = cur0 + st; if (e.key === narrower) v = cur0 - st; }
   if (e.key === 'Enter' || e.key === 'Home') { e.preventDefault(); resetLay(k); return; }
   if (v == null) return; e.preventDefault(); LAY[k === 'sh' ? shKey() : k] = Math.round(clamp(v, ...L[k])); applyLay(); saveLay();
 });
@@ -192,16 +194,30 @@ export function setGlass(m) {
   if (on && !was) $$(LGSEL).forEach(el => { if (el._lgOn) { el._lgSig = ''; lgBuild(el); } });
   $$('.js-glassmode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === m)));
 }
-export function setGA(v = prefs.glassA) { v = +v; R.style.setProperty('--pa', (.92 - v * .0062).toFixed(3)); R.style.setProperty('--la', (.5 - v * .0042).toFixed(3)); }
+/** «Прозрачность стекла» 0…100: 0 — почти сплошное, 100 — почти невидимое; на 60 (по умолчанию) — как было.
+ *  Раньше на обоях панели не становились плотнее 72 %, а окна и меню не менялись вовсе — теперь меняется всё стекло. */
+const k3 = (v, a, b, c) => (v <= 60 ? a + (b - a) * v / 60 : b + (c - b) * (v - 60) / 40).toFixed(3);
+export function setGA(v = prefs.glassA) {
+  v = Math.min(100, Math.max(0, +v || 0));
+  R.style.setProperty('--pa', k3(v, .97, .548, .12)); // панели на чёрном/свечении
+  R.style.setProperty('--pw', k3(v, .96, .43, .08)); // панели на обоях
+  R.style.setProperty('--la', k3(v, .9, .248, .05)); // капсулы сверху, тулбары
+  R.style.setProperty('--wa', k3(v, .97, .7, .42)); // окна (настройки, профиль…)
+  R.style.setProperty('--ma', k3(v, .97, .62, .4)); // меню, всплывашки, тосты
+}
+/** «Матовость» 0…100: множитель размытия под стеклом (50 — как было; 0 — чистое стекло, 100 — вдвое сильнее) */
+export function setGB(v = prefs.glassBlur) { v = Math.min(100, Math.max(0, +v || 0)); R.style.setProperty('--gbk', (v / 50).toFixed(2)); }
 $('.js-glassmode').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   setPref('glass', b.dataset.g); setGlass(b.dataset.g);
   tmsg('ok', b.dataset.g === 'liquid' ? (LGOK ? 'стекло: жидкое — края преломляют то, что под ними' : 'тут преломление не поддерживается — будет матовое') : 'стекло: только матовое — меньше нагрузка на видюху');
 });
 if (!LGOK) $('.js-glassmode button[data-g="liquid"]').title = 'в этом браузере преломление не поддерживается — будет матовое';
-bus.on('pref', (k, v) => { if (k === 'glassA') setGA(v); if (k === 'lite') setGlass(prefs.glass || 'liquid'); });
+bus.on('pref', (k, v) => { if (k === 'glassA') setGA(v); if (k === 'glassBlur') setGB(v); if (k === 'lite') setGlass(prefs.glass || 'liquid'); if (k === 'side') setSide(); });
+/** с какой стороны список друзей: справа (по умолчанию) или слева, как было до v0.7 */
+export function setSide() { R.classList.toggle('sr', prefs.side !== 'left'); applyLay(); placeMini(false); bus.emit('panes'); }
 export function initLayout() {
-  setGlass(prefs.glass || 'liquid'); setGA();
+  setGlass(prefs.glass || 'liquid'); setGA(); setGB(); R.classList.toggle('sr', prefs.side !== 'left');
   // карты преломления считаются попиксельно — после первого кадра, когда браузер свободен
   idle(() => lgScan());
   // тосты приходят и уходят: фильтр стекла убираем вместе с тостом, чтобы не копились

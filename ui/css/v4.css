@@ -2,8 +2,11 @@
 
 /* ---------- верх: бренд над списком · вкладки · кубок ---------- */
 .app{--c1:272px}
-.top,.app.calm .top{grid-template-columns:var(--c1) minmax(0,1fr) auto}
-.fame{display:flex;align-items:center;padding:5px!important}
+.top,.app.calm .top{grid-template-columns:var(--c1) minmax(0,1fr)}
+/* кубок «Зал славы» живёт в блоке бренда, рядом со счётчиком «в сети»: на месте, но в глаза не лезет */
+.brand{justify-content:flex-start;gap:4px;padding-right:5px!important}
+.brand .onl{margin-left:auto}
+.brand .hallb{flex:none;width:38px;height:38px}
 .hallb{position:relative;display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:13px;background:transparent;color:var(--dim);cursor:pointer;transition:background .18s,color .18s,transform .32s var(--spring)}
 .hallb .ic{width:20px;height:20px;transition:transform .45s var(--bouncy)}
 .hallb:hover{background:rgba(255,255,255,.07);color:#ffd36b}
@@ -30,6 +33,16 @@
 .app:not(.calm) .tiles{grid-template-columns:var(--c1) minmax(0,1fr);grid-template-rows:var(--sh,300px) minmax(0,1fr);grid-template-areas:"list stage" "list chat"}
 .app.stfocus:not(.calm) .tiles{grid-template-areas:"list stage" "list stage"}
 .app.stfocus .pane.chat{display:none}
+/* список друзей справа (по умолчанию с v0.7): чат и вкладки слева, бренд с кубком и список — справа */
+@media (min-width:641px){
+  html.sr .top,html.sr .app.calm .top{grid-template-columns:minmax(0,1fr) var(--c1)}
+  html.sr .top>.brand{order:2}
+  html.sr .tiles,html.sr .app.calm .tiles,html.sr .app:not(.calm) .tiles{grid-template-columns:minmax(0,1fr) var(--c1)}
+  html.sr .app.calm .tiles{grid-template-areas:"chat list"}
+  html.sr .app:not(.calm) .tiles{grid-template-areas:"stage list" "chat list"}
+  html.sr .app.stfocus:not(.calm) .tiles{grid-template-areas:"stage list" "stage list"}
+  html.sr .toasts{right:calc(var(--c1,272px) + 38px)}
+}
 .app.calm .stage{display:none}
 .stage{grid-area:stage}
 .app:not(.calm) .stage{animation:stin .5s var(--eo) both}
@@ -111,7 +124,7 @@
 .stb.has-scr .tfoot{left:5px;right:5px;bottom:5px}
 .stb.has-scr .tn{height:20px;padding:0 6px;font-size:11.5px}
 .stb.has-scr .tping{display:none}
-.tbadge{position:absolute;left:8px;top:8px;display:none;height:20px;padding:0 7px;border-radius:6px;font:600 11px/20px var(--sans);letter-spacing:.02em;pointer-events:none}
+.vtile .tbadge{position:absolute;left:8px;top:8px;right:auto;bottom:auto;display:none;width:auto;max-width:calc(100% - 16px);height:20px;padding:0 7px;border-radius:6px;box-shadow:none;font:600 11px/20px var(--sans);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .tbadge.b-live{display:block;background:#e8475e;color:#fff;box-shadow:0 4px 12px -4px rgba(232,71,94,.8)}
 .tbadge.b-duck{display:block;background:rgba(255,201,120,.95);color:#2a1a00}
 .tbadge.b-brb{display:block;background:rgba(18,14,6,.6);color:var(--warn);box-shadow:inset 0 0 0 1px rgba(255,201,120,.4)}
@@ -157,6 +170,10 @@
 .sq:hover{background:rgba(0,0,0,.72)}
 .scap .dsw:empty+.sq{margin-left:auto}
 .stb .tools{top:48px}
+/* инструменты рисования не вылезают за низ экрана: сцена пониже — кнопки компактнее, совсем низкая — в строку */
+.stb .screen{container:scr/size}
+@container scr (max-height:268px){.stb .tools{top:44px;gap:2px;padding:4px}.stb .tools .tl{width:30px;height:30px}.stb .tools .tl .ic{width:16px;height:16px}}
+@container scr (max-height:226px){.stb .tools{flex-direction:row}}
 
 /* низ сцены: кто смотрит · кнопки · реакции */
 .stf{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px;flex:none;padding:6px 12px 12px}
@@ -197,8 +214,7 @@
 @media (max-width:640px){
   .top,.app.calm .top{display:flex;flex-wrap:wrap}
   .top .brand{flex:1 1 100%}
-  .top .nav{flex:1 1 0%;min-width:0}
-  .top .fame{flex:none}
+  .top .nav{flex:1 1 0%;min-width:0;overflow:hidden}
   .tiles,.app.calm .tiles{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-template-areas:"list" "chat"}
   .app:not(.calm) .tiles,.app.stfocus:not(.calm) .tiles{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-template-areas:"list" "stage" "chat"}
   .stage{height:min(78vh,520px)}
@@ -491,7 +507,7 @@ b,strong,h1,h2,h3,h4,h5,h6,th{font-weight:600}
 .logo,.about .big,.flyer,.camv pre,.boot .brand{text-shadow:none}
 .boot .brand svg{filter:none}
 .boot{background:#050506}
-.cur,.pin i,.p2p .pd,.onl .pd.dnd,.pst3.on i,.fxt.on::after,.fontgrid button.on::after,.wl.on::after,.st-live i,.log .m.hof::before,.ib.hang,.aq.nx{box-shadow:none}
+.pin i,.p2p .pd,.onl .pd.dnd,.pst3.on i,.fxt.on::after,.fontgrid button.on::after,.wl.on::after,.st-live i,.log .m.hof::before,.ib.hang,.aq.nx{box-shadow:none}
 .pbio3 h6,.pbox h6,.mdsec,.aw-b small{text-transform:none;letter-spacing:0}
 .pbio3 h6,.pbox h6{font-size:12px;font-weight:600}
 time,.ct,.ub,.vc,.tbadge,.tping,.gcnt,.fcount,.js-jcount,.js-hlcount,.js-bcount{font-variant-numeric:tabular-nums}
@@ -525,3 +541,204 @@ time,.ct,.ub,.vc,.tbadge,.tping,.gcnt,.fcount,.js-jcount,.js-hlcount,.js-bcount{
 .sfxl .row .js-sfxtry{margin:0}
 /* мастер стикеров на невысоком окне: поле «Подпись» не прячется под подвал */
 @media (max-height:960px){.skm-r{gap:8px}.skm-r .skm-pv{width:min(100%,calc(100vh - 660px));min-width:150px;margin:0 auto}}
+
+/* «Зайти» в узком окне: без подписи, только «Зайти» (и число, если в голосе кто-то есть) */
+.nav{container:navbar/inline-size}
+@container navbar (max-width:560px){.vjoin .vj-t{display:none}.vjoin{padding-left:10px}}
+@container navbar (max-width:380px){.vjoin .ic{display:none}}
+
+/* ---------- слева один список: друзья, лички и группы ---------- */
+.sbar{padding-top:10px}
+.sbar .ib{position:relative}
+.sbar .ib .n{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--bad);color:#fff;font:700 10.5px/18px var(--sans);text-align:center;box-shadow:0 0 0 2.5px #111116;pointer-events:none}
+.sbar .ib .n[hidden]{display:none}
+.clist .sec.req{color:color-mix(in srgb,var(--warn) 80%,#fff)}
+.clist .sec .ic{width:13px;height:13px}
+/* друг без переписки: справа — «написать», появляется при наведении */
+.ci.fresh .fgo{grid-area:tm/tm/ub/ub;justify-self:end;display:grid;place-items:center;width:30px;height:30px;border-radius:10px;color:var(--faint);opacity:0;transition:opacity .15s,background .15s,color .15s}
+.ci.fresh .fgo .ic{width:16px;height:16px}
+.ci.fresh:hover .fgo,.ci.fresh:focus-visible .fgo{opacity:1;background:rgba(255,255,255,.07);color:var(--ink)}
+.ci.fresh .lm{color:var(--faint)}
+
+/* ---------- личка без единого сообщения (как в Telegram) ---------- */
+.log>.motd.first{min-height:100%;box-sizing:border-box;display:grid;place-items:center;margin:0;padding:24px 16px!important;border:0!important}
+.motd.first .fst{display:flex;flex-direction:column;align-items:center;gap:0;width:min(360px,100%);padding:26px 24px 20px;border-radius:22px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07);text-align:center}
+.motd.first .fst-av{width:84px;height:84px;margin-bottom:12px;border-radius:30%;image-rendering:pixelated;cursor:pointer;box-shadow:0 14px 30px -12px rgba(0,0,0,.9)}
+.motd.first h2{margin:0;font:600 22px/1.2 var(--sans);letter-spacing:-.02em;color:color-mix(in srgb,var(--mc,#fff) 70%,#fff)}
+.motd.first .fst-st{display:inline-flex;align-items:center;margin-top:4px;color:var(--dim);font-size:13px}
+.motd.first .fst-st .pd.inl{position:static;display:inline-block;width:8px;height:8px;margin-right:6px;border:0}
+.motd.first p{margin:14px 0 6px;color:var(--dim);font-size:14px;line-height:1.5}
+.fst-stk{display:flex;flex-direction:column;align-items:center;gap:2px;margin:4px 0 12px;padding:6px 14px 8px;border:0;border-radius:18px;background:transparent;color:var(--dim);font:600 12.5px/1 var(--sans);cursor:pointer;transition:background .15s,transform .25s var(--spring)}
+.fst-stk img{width:112px;height:112px;object-fit:contain;filter:drop-shadow(0 10px 18px rgba(0,0,0,.45))}
+.fst-stk:hover{background:rgba(255,255,255,.06);color:var(--ink);transform:translateY(-2px)}
+.fst-stk:active{transform:scale(.96)}
+.motd.first .mo-b{display:flex;gap:8px;justify-content:center}
+/* подсказка под полем ввода: на узкой колонке чата лишние подсказки прячем, а не обрезаем */
+.phint{container:phint/inline-size}
+@container phint (max-width:660px){.ph-x{display:none}}
+
+/* ==================== группы: «Новая группа» и настройки группы — одна сетка, меньше шума ==================== */
+.win.gnew{width:min(520px,100%)}
+.gnew .wh .wt{flex:1}
+.win.gset{width:min(600px,100%);height:min(580px,calc(100vh - 48px))}
+/* визитка: картинка (клик — поменять) + название + цвет */
+.gid{display:flex;align-items:center;gap:16px;margin-bottom:20px}
+.gid .gpic{flex:none;border-radius:20px}
+.gid .gpic:hover{transform:scale(1.03)}
+.gid .gpic .tile{width:64px;height:64px;border-radius:20px;font-size:26px}
+.gid .gpic .tile .ic{width:28px;height:28px;opacity:.75}
+.gid .gpic-ed{right:-4px;bottom:-4px;width:24px;height:24px;opacity:0;transform:scale(.7);transition:opacity .15s,transform .25s var(--spring)}
+.gid .gpic-ed .ic{width:12px;height:12px}
+.gid .gpic:hover .gpic-ed,.gid .gpic:focus-visible .gpic-ed,.gid .gpic.empty .gpic-ed{opacity:1;transform:none}
+.gid .gpic:disabled{cursor:default;transform:none}
+.gid .gpic:disabled .gpic-ed{display:none}
+.gid-f{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+.gid-n{height:44px;font-size:16px;font-weight:600}
+.gid-n:disabled{opacity:1;background:transparent;box-shadow:none;padding-left:0;cursor:default}
+.gid .swatches{gap:6px}
+.gid .swatches button{width:22px;height:22px}
+.gid-row{display:flex;align-items:center;gap:10px;min-width:0}
+.gid-row .lnk{margin-left:auto}
+/* мелкие текстовые кнопки в окнах группы */
+.gsec .lnk,.gjoin,.gid-row .lnk,.ginv-r .lnk{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:8px;font:600 12.5px/1 var(--sans);text-decoration:none;color:var(--dim);white-space:nowrap}
+.gsec .lnk:hover,.gjoin:hover,.gid-row .lnk:hover,.ginv-r .lnk:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.gjoin .ic,.ginv-r .lnk .ic{width:14px;height:14px}
+.gsec{display:flex;align-items:center;gap:8px;min-height:28px;margin:0 0 6px}
+.gsec b{font-weight:600;font-size:14px}
+.gsec-n{color:var(--faint);font-size:13px}
+.gsec-sp{flex:1}
+.gsec .lnk{margin-right:-9px}
+/* карточка — общий фон для списков и строк настроек */
+.gcard{border-radius:14px;background:rgba(255,255,255,.035);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.gcard+.gcard{margin-top:12px}
+.gnew .pick.gcard{max-height:min(300px,calc(100vh - 380px));min-height:56px;overflow:auto;margin:0;padding:4px;gap:0}
+.gnew .pk{min-height:48px;padding:6px 10px;border-radius:10px}
+.gnew .pk .avw,.gnew .pk .avw .ava{width:32px;height:32px}
+.gnew .pkc,.gadd .pkc{width:20px;height:20px;border-radius:7px}
+.gnew .pk[aria-pressed="true"] .pkc{box-shadow:none}
+.gnew .pick .empty{padding:16px;text-align:center;color:var(--faint);font-size:13px}
+.gnew .gsr{margin-bottom:8px}
+.gnew .gchips{margin-bottom:10px}
+/* вкладки настроек — подчёркиванием, под шапкой; окно одной высоты на всех вкладках */
+.gset .wh{border-bottom:0;padding-bottom:6px}
+.gsh{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.gsh .wt,.gsh .wsub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gsh .wsub{flex:none}
+.gset .gstw .tile{width:40px;height:40px;border-radius:13px;font-size:17px}
+.gtabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.gtabs button{position:relative;flex:none;height:40px;padding:0 10px;border:0;background:transparent;color:var(--dim);font:600 13.5px/1 var(--sans);cursor:pointer;transition:color .15s}
+.gtabs button:hover{color:var(--ink)}
+.gtabs button[aria-pressed="true"]{color:var(--ink)}
+.gtabs button[aria-pressed="true"]::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:#fff}
+.gt-n{margin-left:6px;color:var(--faint);font-weight:500}
+.gset .gpage{margin-top:0}
+/* участники */
+.gmtop{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.gmadd{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:48px;padding:6px 10px;border:0;border-radius:12px;background:transparent;color:var(--ink);font:600 14px/1.2 var(--sans);text-align:left;cursor:pointer;transition:background .15s}
+.gmadd:hover,.gmadd[aria-expanded="true"]{background:rgba(255,255,255,.06)}
+.gmadd-i{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:50%;background:#fff;color:#0b0b0e}
+.gmadd-i .ic{width:16px;height:16px}
+.gmsr{flex:none;width:190px}
+.gmsr[hidden]{display:none}
+.gadd{margin-bottom:12px}
+.gadd .pick{display:flex;flex-direction:column;gap:0;max-height:220px;overflow:auto;padding:4px}
+.gadd .pk{min-height:46px}
+.gadd .pk .ava{width:30px;height:30px}
+.gadd .pk>span:not(.pkc){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gadd .pk .ic{width:16px;height:16px;color:var(--dim)}
+.gadd .pk[aria-pressed="true"] .ic{color:var(--ok)}
+.gadd .empty{padding:14px 16px;color:var(--faint);font-size:13px}
+.gmrow{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 8px 6px 12px}
+.gmrow+.gmrow{box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.gmrow .avw{flex:none;position:relative;width:36px;height:36px}
+.gmrow .avw .ava{width:36px;height:36px}
+.gmn{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.gmn b{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;font-size:14px}
+.gmn b>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gmn small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--faint);font-size:12px}
+.gmn .role{flex:none;padding:2px 7px;font-size:11px}
+.gmn [data-prof]{cursor:pointer}
+.gm-more{flex:none;opacity:0;transition:opacity .15s}
+.gmrow:hover .gm-more,.gm-more:focus-visible,.gm-more[aria-expanded="true"]{opacity:1}
+@media (hover:none){.gm-more{opacity:1}}
+.gmempty{padding:16px;text-align:center;color:var(--faint);font-size:13px}
+/* настройки */
+.gro{display:flex;align-items:center;gap:8px;margin:-8px 0 12px;font-size:12.5px;color:var(--faint)}
+.gro .ic{width:14px;height:14px}
+.grow{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:8px 14px;border:0;background:transparent;color:inherit;font:inherit;text-align:left}
+.grow+.grow{box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.grow-i{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.06);color:var(--dim)}
+.grow-i .ic{width:16px;height:16px}
+.grow .lab{flex:1;min-width:0}
+.grow .lab b{font-size:14px}
+.grow .lab small{font-size:12px}
+.grow .seg{flex:none}
+.gdanger{cursor:pointer;border-radius:14px;transition:background .15s}
+.gdanger:hover{background:rgba(255,92,92,.07)}
+.gdanger .lab b{color:var(--bad)}
+.gdanger .grow-i{background:rgba(255,92,92,.1);color:var(--bad)}
+/* приглашение: QR слева, ссылка и пояснение справа */
+.ginv:not([hidden]){display:flex;align-items:center;gap:22px;padding-top:4px}
+.ginv .qr{flex:none;width:184px;height:184px;padding:12px;border-radius:18px;background:#fff;box-shadow:0 14px 34px -14px rgba(0,0,0,.6)}
+.ginv-r{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.ginv-t{font-weight:600;font-size:16px}
+.ginv-s{margin:0;color:var(--dim);font-size:13px;line-height:1.45}
+.ginv-l{display:flex;align-items:center;gap:8px;width:100%;margin-top:2px}
+.ginv-l .kc{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ginv-l .cbtn{flex:none}
+.ginv-r .lnk{margin-left:-9px}
+.gset .wb{container:gsetb/inline-size}
+@container gsetb (max-width:500px){
+  .ginv:not([hidden]){flex-direction:column;align-items:stretch}
+  .ginv .qr{align-self:center}
+  .gmsr{width:140px}
+  .grow:has(.seg){flex-wrap:wrap}
+}
+.gid-n:disabled{border-color:transparent}
+.grow .tg:disabled,.grow .seg button:disabled{opacity:.45;cursor:default}
+.grow .seg:has(button:disabled){pointer-events:none}
+
+/* ==================== демка: «Не смотреть» и пауза ==================== */
+.scap .js-dhide{margin-left:auto}
+.scap .dsw:not(:empty)~.js-dhide{margin-left:0}
+.spause{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px;text-align:center;background:radial-gradient(120% 90% at 50% 40%,rgba(255,255,255,.05),transparent 70%)}
+.spause[hidden]{display:none}
+.spause>.ic{width:26px;height:26px;color:var(--faint)}
+.spause b{font-weight:600;font-size:15px}
+.spause span{color:var(--dim);font-size:13px}
+.spause .cbtn{margin-top:6px}
+/* ==================== нагрузка: поверх видео — без размытия фона ====================
+   backdrop-filter над видео пересчитывается на каждом кадре (60 раз в секунду на каждую плашку) —
+   на слабой видеокарте это заметные проценты. Над видео — просто плотная подложка, выглядит так же. */
+.stb .tn,.scap .js-dmeta,.scap .dtag,.sq,.thint,.camtag,.floater b,.mi-who,.vclip .vcl-dl,.mdt .mdp,.mdt .mdx .gbtn.sm{-webkit-backdrop-filter:none;backdrop-filter:none}
+.stb .tn,.scap .js-dmeta,.scap .dtag,.sq,.camtag,.floater b{background:rgba(8,9,12,.68)}
+.thint,.mi-who{background:rgba(8,9,12,.8)}
+.stb .tools,.stb .tools::before{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.stb .tools{background:rgba(14,15,20,.9)}
+
+/* ---------- голос группы в шапке: трубка; кто-то уже там — зелёная, со счётчиком ---------- */
+.ib.vgo{position:relative}
+.ib.vgo.live{color:var(--ok);background:rgba(126,226,184,.1);box-shadow:inset 0 0 0 1px rgba(126,226,184,.26)}
+.ib.vgo.live:hover{background:rgba(126,226,184,.18);color:var(--ok)}
+.ib.vgo .vn{position:absolute;top:-3px;right:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--ok);color:#03140a;font:700 10px/16px var(--sans);text-align:center;font-variant-numeric:tabular-nums;box-shadow:0 0 0 2px rgba(14,14,18,.95)}
+
+/* ---------- v0.7 · стекло: «Прозрачность» и «Матовость» действуют на всё стекло ----------
+   --pa/--pw/--la/--wa/--ma ставит setGA() (layout.js), --gbk — setGB(): 1 = как было, 0 = без размытия, 2 = вдвое сильнее.
+   Раньше на обоях панели не становились плотнее 72 %, окна и меню не менялись вовсе, а размытие стекла было зашито. */
+:root{--gbk:1;--pw:.43;--wa:.7;--ma:.62}
+html.haswall{--glass:rgba(14,14,18,var(--pw))}
+.wback>.win{--la:var(--wa)}
+.vpop,.stk,.toast{--la:var(--ma)}
+.glass{-webkit-backdrop-filter:blur(calc(18px * var(--gbk))) saturate(170%);backdrop-filter:blur(calc(18px * var(--gbk))) saturate(170%)}
+.pane.glass{-webkit-backdrop-filter:blur(calc(42px * var(--gbk))) saturate(150%);backdrop-filter:blur(calc(42px * var(--gbk))) saturate(150%)}
+html.haswall .pane.glass{-webkit-backdrop-filter:blur(calc(30px * var(--gbk))) saturate(175%) brightness(1.04);backdrop-filter:blur(calc(30px * var(--gbk))) saturate(175%) brightness(1.04)}
+.island.glass,.tools,.tmux,.vpop,.stk,.toast,.wback>.win,.field{-webkit-backdrop-filter:blur(calc(16px * var(--gbk))) saturate(185%) brightness(1.06);backdrop-filter:blur(calc(16px * var(--gbk))) saturate(185%) brightness(1.06)}
+html.lg .lqf{-webkit-backdrop-filter:blur(calc(var(--lgb,2.5px) * var(--gbk))) var(--lgf,blur(0)) saturate(190%) brightness(1.1);backdrop-filter:blur(calc(var(--lgb,2.5px) * var(--gbk))) var(--lgf,blur(0)) saturate(190%) brightness(1.1)}
+/* зерно «инея» тоже от матовости: на чистом стекле его нет */
+.pane.glass::before,.wback>.win::before{opacity:calc(.09 * var(--gbk))}
+/* тянешь ползунок стекла/обоев — затемнение под окном настроек уходит, видно сами панели */
+.wback{transition:opacity .18s,background-color .3s var(--eo)}
+.wback.peek{background:transparent}
+/* строки настроек, которые сейчас ни на что не влияют (стекло в лёгком режиме) */
+.win .row.na{opacity:.42}
+.win .row.na .rg,.win .row.na .seg{pointer-events:none}

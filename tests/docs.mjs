@@ -106,7 +106,7 @@ async function page(name, http, ws, prefs = {}) {
 }
 // «Беречь уши» на фейковом мике (пищит каждую секунду) приглушает людей и показывает всплывашку — для картинок выключено
 const P = await page('anton', 8491, 7491, { earGuard: false });
-const openChat = async (X, name) => { await X.click('.stab[data-tab="chats"]'); await X.locator('.js-chats .ci').filter({ has: X.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
+const openChat = async (X, name) => { await X.locator('.js-chats .ci').filter({ has: X.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
 const esc = async () => { for (let i = 0; i < 2; i++) { await P.keyboard.press('Escape').catch(() => {}); await sleep(120); } };
 const shot = async (n, f, X = P) => {
   if (only && !only.split(',').some(o => n.includes(o))) return;
@@ -131,9 +131,14 @@ await shot('08-group', async () => { await openChat(P, 'кухня'); });
 const PB = await page('vasyan', 8492, 7492, { earGuard: false }), PD = await page('dimon', 8493, 7493, { earGuard: false });
 await P.evaluate(() => { localStorage.setItem('hunty-lay', JSON.stringify({ shv: 470 })); }); await P.reload(); await sleep(1500);
 await openChat(P, 'кухня'); await openChat(PB, 'кухня'); await openChat(PD, 'кухня');
-await P.click('.js-vjoin'); await sleep(1200); await PB.click('.js-vjoin'); await sleep(800); await PD.click('.js-vjoin'); await sleep(3500);
+await P.click('.js-hbtns [data-act="voice"]'); await sleep(1200); await PB.click('.js-hbtns [data-act="voice"]'); await sleep(800); await PD.click('.js-hbtns [data-act="voice"]'); await sleep(3500);
 await shot('09-voice', async () => {});
-await PD.click('.js-share'); await sleep(600); await PD.click('.js-sstart'); await sleep(4000);
+await PD.click('.js-share'); await sleep(600); await PD.click('.js-sstart');
+{ // ждём, пока у anton пойдут кадры (на слабой машине кодировщик стартует не сразу), и ещё чуть-чуть — чтобы в шапке были 720p и fps
+  const t0 = Date.now();
+  await P.waitForFunction(() => { const v = document.querySelector('.js-dvid'); return v && v.videoWidth > 0 && v.currentTime > 0.5; }, null, { timeout: 20000 }).catch(() => console.log('! у anton демка без кадров 20 с'));
+  console.log('  демка пошла через', Date.now() - t0, 'мс'); await sleep(2000);
+}
 await shot('00-hero', async () => {});
 await shot('02-demo-draw', async () => {
   await P.click('.tl[data-tool="pen"]'); await sleep(200);
@@ -162,14 +167,14 @@ await PB.context().close(); await PD.context().close();
 await P.evaluate(async () => { const { setPref } = await import('/js/core.js'); setPref('earGuard', true); document.querySelectorAll('.js-toasts > *').forEach(t => t.remove()); });
 await sleep(300);
 // 4. друзья, инвайт, стикеры, зал славы
-await shot('11-friends', async () => { await P.click('.stab[data-tab="friends"]'); await sleep(300); await P.locator('button.ib[data-win="friend"]').first().click(); await sleep(800); await P.evaluate(() => { document.querySelectorAll('.js-toasts > *').forEach(t => t.remove()); document.querySelectorAll('.snack.on').forEach(s => s.classList.remove('on')); }); await sleep(400); });
+await shot('11-friends', async () => { await P.locator('button.ib[data-win="friend"]').first().click(); await sleep(800); await P.evaluate(() => { document.querySelectorAll('.js-toasts > *').forEach(t => t.remove()); document.querySelectorAll('.snack.on').forEach(s => s.classList.remove('on')); }); await sleep(400); });
 await esc();
 await shot('05-invite', async () => { await openChat(P, 'кухня'); await P.locator('.js-hbtns button').last().click(); await sleep(300); await P.click('.js-gtabs button[data-g="invite"]'); await sleep(900); });
 await esc();
 await shot('12-stickers', async () => { await openChat(P, 'vasyan'); await P.click('.js-stkb'); await sleep(500); });
 await esc();
 await shot('18-group-create', async () => {
-  await P.click('.stab[data-tab="chats"]'); await P.locator('[data-win="group"]:visible').first().click(); await sleep(400);
+  await P.locator('[data-win="group"]:visible').first().click(); await sleep(400);
   await P.fill('.js-gname', 'катка в пятницу'); await P.locator('.js-gcol button').nth(1).click();
   await P.locator('.js-gpick [role="option"], .js-gpick button, .js-gpick .pk').nth(0).click().catch(() => {}); await P.locator('.js-gpick [role="option"], .js-gpick button, .js-gpick .pk').nth(1).click().catch(() => {});
   await sleep(400);

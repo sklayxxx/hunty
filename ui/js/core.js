@@ -58,6 +58,8 @@ export const PDEF = {
   pttKey: '', pttGlobal: false, sbVol: 70, gameScan: true, msgSize: 15,
   // v0.4
   keys: {}, earGuard: true, sfxOff: {}, hallSeen: 0, favsMoved: false, fxMsg: true, clipSec: 30, clips: true,
+  // v0.7
+  side: 'right', glassBlur: 50,
 };
 export const prefs = Object.assign({}, PDEF);
 try { const o = JSON.parse(localStorage.getItem('hunty-prefs') || '{}'); Object.assign(prefs, o); if (o.ns === false && !o.nsMode) prefs.nsMode = 'off'; } catch (_) {}

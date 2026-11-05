@@ -1,9 +1,9 @@
 // Демка: экран из голоса (вебки — в плитках участников), указка/карандаш/реакции поверх (синхронно у всех), превью в мини-окне
-import { $, $$, R, esc, ic, clamp, prefs, bus, reduce } from './core.js';
+import { $, $$, R, esc, ic, clamp, prefs, setPref, bus, reduce } from './core.js';
 import { api } from './api.js';
 import { S, myId, myNick, nickOf, avaOf, colorOf, dmPeer, voiceIn } from './state.js';
 import { app, tmsg, tone, sfx } from './ui.js';
-import { V, setShareQ } from './voice.js';
+import { V, setShareQ, shareStat, watchersOf } from './voice.js';
 import { openMenu } from './menu.js';
 import { HUNTY, stkSrc, stkName } from './stickers.js';
 
@@ -13,6 +13,7 @@ const tools = $('.js-tools'), thint = $('.js-thint'), cx2 = ink.getContext('2d')
 const dlive = $('.js-dlive'), dmeta = $('.js-dmeta'), dtag = $('.js-dtag'), sw = $('.js-dsw'), dq = $('.js-dq');
 const wav = $('.js-wav'), wtx = $('.js-wtx'), rbar = $('.js-rbar');
 const mini = $('.js-mini'), mscr = $('.js-mscr'), mwho = $('.js-mwho'), mlive = $('.mi-h .live', mini);
+const dhide = $('.js-dhide'), spause = $('.js-spause');
 
 /* ---------- кто что показывает ---------- */
 const MED = new Map();          // peer → {cam, scr}
@@ -41,41 +42,70 @@ bus.on('media', (peer, k, st) => {
   render();
 });
 bus.on('ev:share', v => { if (v.room !== room() || !v.data) return; DRAW.set(v.from, v.data.draw !== false); render(); });
-bus.on('vleft', () => { MED.clear(); DRAW.clear(); order = []; focus = ''; manual = false; strokes = []; pins.innerHTML = ''; fl.innerHTML = ''; setTool('none'); render(); });
+bus.on('vleft', () => { MED.clear(); DRAW.clear(); order = []; focus = ''; manual = false; strokes = []; pins.innerHTML = ''; fl.innerHTML = ''; paused.clear(); sentW = null; clearTimeout(wT); setTool('none'); render(); });
+bus.on('watch', () => renderWatch());
+bus.on('pref', k => { if (k === 'shareDraw' && V.share) render(); }); // своя демка: «кто рисует» сменили в настройках
+
+/* ---------- чью демку я смотрю — говорю показывающим ----------
+   Не смотрю (Hunty свёрнут, на сцене чужая демка, нажал «Не смотреть») — показывающий ставит мою копию
+   на паузу: у него не крутится лишний кодировщик, у меня — декодер, и интернет у обоих свободнее. */
+const paused = new Set();       // демки, которые я скрыл кнопкой «Не смотреть»
+let sentW = null, wT = 0;
+function wantWatch() {
+  if (!room() || document.visibilityState === 'hidden') return '';
+  return focus && focus !== myId() && MED.get(focus) && MED.get(focus).scr && !paused.has(focus) ? focus : '';
+}
+function syncWatch(force, now) {
+  const w = wantWatch();
+  if (!force && w === sentW) { clearTimeout(wT); return; }
+  if (sentW === null && !w && !force) { sentW = ''; return; } // только зашёл, демок нет — говорить нечего
+  clearTimeout(wT);
+  // свернул — пауза через пару секунд (alt-tab туда-обратно не дёргает поток); вернулся, переключил или нажал «Не смотреть» — сразу
+  wT = setTimeout(() => { const w2 = wantWatch(); if (!force && w2 === sentW) return; sentW = w2; if (room()) api('ev', { room: room(), kind: 'watch', data: { p: w2 } }).catch(() => {}); }, w || now ? 0 : 3000);
+}
+document.addEventListener('visibilitychange', () => syncWatch());
+setInterval(() => { if (room() && sharers().some(p => p !== myId())) syncWatch(true); }, 30000); // на случай потерянного события
+dhide.addEventListener('click', e => { e.stopPropagation(); if (!focus || focus === myId()) return; paused.add(focus); render(); syncWatch(false, true); tmsg('ok', `демка ${nickOf(focus)} на паузе — не тратит интернет и проц`); });
+$('.js-spgo').addEventListener('click', e => { e.stopPropagation(); paused.delete(focus); fpsTxt = ''; render(); });
 bus.on('voice', (r) => { if (r === room()) renderWatch(); });
 bus.on('layout', () => { render(); requestAnimationFrame(() => { sizeInk(); redraw(); }); });
 bus.on('panes', () => { sizeInk(); redraw(); });
 bus.on('profile', () => render());
-bus.on('shareq', () => meta());
+bus.on('shareq', () => meta()); bus.on('sharestat', () => { if (focus === myId()) meta(); });
 
 /* ---------- отрисовка ---------- */
 let fpsTxt = '', hadScr = false;
 export function render() {
   const me = myId(), sh = sharers();
   if (focus && !sh.includes(focus)) focus = sh.slice(-1)[0] || '';
-  const st = focusStream(), mine = focus === me;
-  if (st) { if (dvid.srcObject !== st) { dvid.srcObject = st; fpsTxt = ''; dvid.play().catch(() => {}); } dvid.hidden = false; }
+  const st = focusStream(), mine = focus === me, pz = !!st && !mine && paused.has(focus);
+  if (st && !pz) { if (dvid.srcObject !== st) { dvid.srcObject = st; fpsTxt = ''; dvid.play().catch(() => {}); } dvid.hidden = false; }
   else { if (dvid.srcObject) dvid.srcObject = null; dvid.hidden = true; }
+  spause.hidden = !pz; if (pz) $('.js-spwho', spause).textContent = `${nickOf(focus)} показывает экран`;
+  dhide.hidden = !st || mine || pz;
   // нет экрана — сцена отдаётся плиткам; есть — экран крупно, плитки полоской снизу
   scr.hidden = !st; stb.classList.toggle('has-scr', !!st); scr.classList.toggle('has-scr', !!st); scr.classList.toggle('mine', mine);
   if (hadScr !== !!st) { hadScr = !!st; bus.emit('stagevid'); }
-  const can = !!st && drawOk(focus);
+  const can = !!st && !pz && drawOk(focus);
   tools.hidden = !can; if (!can && scr.dataset.tool !== 'none') setTool('none');
   dlive.hidden = !st; dtag.hidden = !can;
   dq.hidden = !(st && mine && V.share);
   meta();
   // переключатель, если показывают несколько
   sw.innerHTML = sh.length > 1 ? sh.map(p => `<button type="button" class="dswb${p === focus ? ' on' : ''}" data-u="${esc(p)}" title="Смотреть демку ${esc(nickOf(p))}"><img alt="" src="${avaOf(p)}">${esc(p === me ? 'ты' : nickOf(p))}</button>`).join('') : '';
-  renderWatch(); renderMini();
+  renderWatch(); renderMini(); syncWatch();
   if (st) requestAnimationFrame(() => { sizeInk(); redraw(); });
 }
 function meta() {
   const st = focusStream();
   if (!st) { dmeta.textContent = ''; return; }
   const t = st.getVideoTracks()[0], s = t && t.getSettings ? t.getSettings() : {};
-  const h = focus === myId() ? s.height : dvid.videoHeight, fps = focus === myId() ? Math.round(s.frameRate || 0) : fpsTxt;
-  dmeta.textContent = `${focus === myId() ? 'твой экран' : nickOf(focus)}${h ? ' · ' + h + 'p' : ''}${fps ? ' · ' + fps + ' fps' : ''}`;
-  if (!dq.hidden) $('span', dq).textContent = `${s.height || prefs.shareRes || 1080}p · ${Math.round(s.frameRate || prefs.shareFps || 30)}`;
+  // своё — что реально уходит друзьям (статистика WebRTC), чужое — что реально приходит
+  const mine = focus === myId(), q = shareStat;
+  if (!mine && paused.has(focus)) { dmeta.textContent = `${nickOf(focus)} · на паузе`; return; }
+  const h = mine ? (q.n ? q.h : s.height) : dvid.videoHeight, fps = mine ? (q.n ? q.fps : Math.round(s.frameRate || 0)) : fpsTxt;
+  dmeta.textContent = `${mine ? 'твой экран' : nickOf(focus)}${h ? ' · ' + h + 'p' : ''}${fps ? ' · ' + fps + ' fps' : ''}`;
+  if (!dq.hidden) $('span', dq).textContent = `${prefs.shareRes || 1080}p · ${prefs.shareFps || 30}`;
 }
 dvid.addEventListener('resize', meta);
 dvid.addEventListener('loadedmetadata', () => { meta(); sizeInk(); redraw(); });
@@ -89,6 +119,9 @@ dq.addEventListener('click', e => {
     ...[[720, 'для слабого интернета'], [1080, 'чётко'], [1440, 'очень чётко · нужен хороший интернет']].map(([r, d]) => ({ label: r + 'p', sub: d, check: r === res, fn: () => setShareQ(r, fps) })),
     '-',
     ...[[15, 'текст, код, презентации'], [30, 'обычно'], [60, 'игры и видео']].map(([f, d]) => ({ label: f + ' fps', sub: d, check: f === fps, fn: () => setShareQ(res, f) })),
+    '-',
+    { label: 'Чёткость текста', sub: 'код, документы — буквы не мылятся', check: prefs.shareHint !== 'motion' && fps < 50, disabled: fps >= 50, fn: () => { setPref('shareHint', 'detail'); setShareQ(res, fps); } },
+    { label: 'Плавность', sub: fps >= 50 ? 'при 60 fps — всегда' : 'игры и видео — без рывков', check: prefs.shareHint === 'motion' || fps >= 50, fn: () => { setPref('shareHint', 'motion'); setShareQ(res, fps); } },
   ], { el: dq });
 });
 // fps у входящей демки — из статистики WebRTC
@@ -106,11 +139,11 @@ function renderWatch() {
   if (!ids.includes(me)) ids.unshift(me);
   const st = focus && MED.get(focus) && MED.get(focus).scr;
   if (st) {
-    const w = ids.filter(p => p !== focus).sort((a, b) => (a === me ? -1 : b === me ? 1 : 0));
-    wav.innerHTML = w.slice(0, 6).map(p => `<img alt="" src="${avaOf(p)}" title="${esc(nickOf(p))}">`).join('');
+    const w = [...(focus !== me && wantWatch() === focus ? [me] : []), ...watchersOf(focus)];
+    wav.innerHTML = w.slice(0, 6).map(p => `<img alt="" src="${avaOf(p)}" title="${esc(nickOf(p))}" data-u="${esc(p)}">`).join('');
     wtx.textContent = focus === me ? (w.length ? 'смотрят: ' + w.map(nickOf).join(', ') : 'пока никто не смотрит') : 'смотрят: ' + w.map(p => p === me ? 'ты' : nickOf(p)).join(', ');
   } else {
-    wav.innerHTML = ids.slice(0, 6).map(p => `<img alt="" src="${avaOf(p)}" title="${esc(nickOf(p))}">`).join('');
+    wav.innerHTML = ids.slice(0, 6).map(p => `<img alt="" src="${avaOf(p)}" title="${esc(nickOf(p))}" data-u="${esc(p)}">`).join('');
     wtx.textContent = `в голосе ${ids.length}`;
   }
 }
@@ -122,7 +155,7 @@ mscr.prepend(mvid); mscr.prepend(mdm);
 function renderMini() {
   if (!room()) { mvid.srcObject = null; return; }
   const me = myId();
-  const st = focus && MED.get(focus) ? MED.get(focus).scr : null;
+  const st = focus && MED.get(focus) && !(focus !== me && paused.has(focus)) ? MED.get(focus).scr : null;
   const camP = !st ? [...MED.entries()].filter(([p, m]) => m.cam && p !== me).map(([p]) => p)[0] : '';
   const src = st || (camP ? MED.get(camP).cam : null);
   if (src) { if (mvid.srcObject !== src) { mvid.srcObject = src; mvid.play().catch(() => {}); } mvid.hidden = false; }

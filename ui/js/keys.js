@@ -162,7 +162,8 @@ export async function bindKey(id, btn) {
 function paintLabels() {
   $$('.vpop .key[data-k]').forEach(b => { const k = $('kbd', b); if (k) { const c = keyOf(b.dataset.k); k.textContent = c ? keyLabel(c) : '—'; } });
   const set = (sel, base, id) => { const el = $(sel); if (el) el.title = base + ' · ' + keyLabel(keyOf(id)); };
-  set('.js-clip', 'Клип: последние 30 секунд', 'clip'); set('.js-memic', 'Микрофон', 'mic'); set('.js-medeaf', 'Звук', 'deaf');
+  set('.js-clip', `Клип: последние ${+prefs.clipSec || 30} сек`, 'clip');
+  // .js-memic / .js-medeaf подписывает me.js (там ещё состояние и эффект голоса)
   set('.js-mmic', 'Микрофон', 'mic'); set('.js-mdeaf', 'Звук', 'deaf'); set('.js-vmin', 'Свернуть в мини-окно', 'mini');
   const sb = $('.js-sbstop'); if (sb) sb.title = 'Остановить показ · ' + keyLabel(keyOf('share'));
   const bt = $('.js-btns'); if (bt) bt.title = 'Кнопки и звуки · ' + ['F1', 'F2', 'F3', 'F7'].map(k => keyLabel(keyOf(k))).filter(x => x !== 'без клавиши').slice(0, 2).join(', ') + '…';
@@ -172,7 +173,7 @@ const list = $('.js-klist');
 function renderList() {
   if (!list) return;
   const glob = !!prefs.pttGlobal && gkeysOk();
-  list.innerHTML = KEYDEF.map(([id, name, sub, , g]) => `<div class="krow kbind" data-id="${id}"><span class="kl"><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${g && glob ? '<span class="kg" title="ловится, даже когда ты в игре">в играх</span>' : ''}${keyOf(id) !== (KDEF[id] || '') && !(id === 'ptt' && !prefs.keys?.ptt && !prefs.pttKey) ? '<button class="kx" type="button" data-reset="' + id + '" title="Вернуть как было" aria-label="Вернуть как было">↺</button>' : ''}<button class="kset" type="button" data-id="${id}" title="Нажми и выбери клавишу · Backspace — убрать" aria-label="${esc(name)}: ${esc(keyLabel(keyOf(id)))}. Нажми, чтобы поменять">${keyKbd(keyOf(id))}</button></div>`).join('');
+  list.innerHTML = KEYDEF.map(([id, name, sub, , g]) => (id === 'clip' ? (sub = `сохранить последние ${+prefs.clipSec || 30} секунд звонка`) : 0, `<div class="krow kbind" data-id="${id}"><span class="kl"><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${g && glob ? '<span class="kg" title="ловится, даже когда ты в игре">в играх</span>' : ''}${keyOf(id) !== (KDEF[id] || '') && !(id === 'ptt' && !prefs.keys?.ptt && !prefs.pttKey) ? '<button class="kx" type="button" data-reset="' + id + '" title="Вернуть как было" aria-label="Вернуть как было">↺</button>' : ''}<button class="kset" type="button" data-id="${id}" title="Нажми и выбери клавишу · Backspace — убрать" aria-label="${esc(name)}: ${esc(keyLabel(keyOf(id)))}. Нажми, чтобы поменять">${keyKbd(keyOf(id))}</button></div>`)).join('');
 }
 if (list) {
   list.addEventListener('click', e => {
@@ -181,6 +182,6 @@ if (list) {
   });
   const rs = $('.js-kreset'); if (rs) rs.addEventListener('click', resetKeys);
 }
-bus.on('pref', k => { if (k === 'keys' || k === 'pttKey' || k === 'pttGlobal') paintLabels(); });
+bus.on('pref', k => { if (k === 'keys' || k === 'pttKey' || k === 'pttGlobal' || k === 'clipSec') paintLabels(); });
 bus.on('layout', () => requestAnimationFrame(paintLabels));
 paintLabels();

@@ -63,7 +63,7 @@ const A = await page('A', 'http://127.0.0.1:8461/?ws=7461&noboot');
 const B = await page('B', 'http://127.0.0.1:8462/?ws=7462&noboot');
 await sleep(1800);
 const step = s => console.log('·', s);
-const openChat = async (P, name) => { await P.click('.stab[data-tab="chats"]'); await P.locator('.js-chats .ci').filter({ has: P.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
+const openChat = async (P, name) => { await P.locator('.js-chats .ci').filter({ has: P.locator('.nm', { hasText: new RegExp('^' + name + '$') }) }).first().click(); await sleep(500); };
 const vis = (P, sel) => P.locator(sel).first().isVisible();
 // звук за ~3 с: свой мик (после гейна) и что слышно от каждого пира — пик RMS по анализаторам (опрос каждые 15 мс:
 // фейковый мик Chromium пищит коротко раз в секунду) + энергия из WebRTC-статистики — проверка, что звук реально идёт
@@ -99,9 +99,9 @@ if (only('onboard')) {
 if (only('voice')) {
   step('group voice');
   await openChat(A, 'кухня'); await openChat(B, 'кухня');
-  await A.click('.js-vjoin'); await sleep(1500);
-  console.log('B vjoin visible', await vis(B, '.js-vjoin'));
-  await B.click('.js-vjoin'); await sleep(4500);
+  await A.click('.js-hbtns [data-act="voice"]'); await sleep(1500);
+  console.log('B vjoin visible', await vis(B, '.js-hbtns [data-act="voice"]'));
+  await B.click('.js-hbtns [data-act="voice"]'); await sleep(4500);
   await shot(A, 'd1-voice-A'); await shot(B, 'd1-voice-B');
   console.log('pcs', JSON.stringify(await dump(A)), JSON.stringify(await dump(B)));
   console.log('rows A', await A.evaluate(() => [...document.querySelectorAll('.vtile')].map(r => r.className + ' ' + r.textContent.trim().slice(0, 40))));
@@ -168,11 +168,11 @@ if (only('win')) {
   await A.click('.js-gtabs [data-g="invite"]'); await sleep(500); await shot(A, 'g3-gset-invite');
   await A.keyboard.press('Escape'); await sleep(300);
   step('profile');
-  await A.click('.stab[data-tab="friends"]'); await sleep(300);
-  await A.locator('.js-friends [data-prof]').first().click(); await sleep(500); await shot(A, 'h1-profile');
+  await openChat(A, 'vasyan');
+  await A.locator('.js-chead [data-prof]').first().click(); await sleep(500); await shot(A, 'h1-profile');
   await A.keyboard.press('Escape'); await sleep(300);
   step('friend win');
-  await A.click('.pbtn[data-win="friend"]'); await sleep(500); await shot(A, 'h2-friend');
+  await A.click('.sbar [data-win="friend"]'); await sleep(500); await shot(A, 'h2-friend');
   await A.keyboard.press('Escape'); await sleep(300);
   await A.click('.ws.plus'); await sleep(400); await shot(A, 'h3-group'); await A.keyboard.press('Escape'); await sleep(300);
   await shot(A, 'h4-after');
