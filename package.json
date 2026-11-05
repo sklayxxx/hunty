@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node tests/core.mjs",
     "test:dht": "node tests/dht.mjs",
-    "test:ui": "node tests/ui.mjs"
+    "test:ui": "node tests/ui.mjs",
+    "docs:shots": "node tests/docs.mjs"
   },
   "devDependencies": {
     "playwright": "^1.48.0"

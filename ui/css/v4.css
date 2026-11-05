@@ -148,6 +148,8 @@
 .scap .live[hidden],.scap .dtag[hidden]{display:none}
 .scap .js-dmeta{padding:5px 10px;border-radius:99px;background:rgba(0,0,0,.52);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#fff;font:500 12px/1.2 var(--sans)}
 .scap .js-dmeta:empty{display:none}
+/* «можно рисовать» поверх светлой картинки (небо, белый сайт) читалась плохо — такая же тёмная подложка, как у подписи */
+.scap .dtag{background:rgba(0,0,0,.52);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .scap .dsw{margin-left:auto}
 .sq{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px 0 8px;border:0;border-radius:99px;background:rgba(0,0,0,.55);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#fff;font:600 12px/1 var(--sans);cursor:pointer;transition:background .15s}
 .sq[hidden]{display:none}
@@ -205,7 +207,7 @@
 }
 
 /* ---------- лёгкий режим ---------- */
-html.lite .tn,html.lite .scap .js-dmeta,html.lite .sq{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(0,0,0,.72)}
+html.lite .tn,html.lite .scap .js-dmeta,html.lite .scap .dtag,html.lite .sq{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(0,0,0,.72)}
 html.lite .vtile,html.lite .stage,html.lite .st-roll,html.lite .onl-av img,html.lite .vtile.marked .tmark{animation:none}
 @media (prefers-reduced-motion:reduce){.vtile,.app:not(.calm) .stage,.st-live i::after,.tmark.m-wait i,.hallb.new .ic,.onl-av img{animation:none!important}}
 

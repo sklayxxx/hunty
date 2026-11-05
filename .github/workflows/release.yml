@@ -115,6 +115,8 @@ jobs:
     needs: [windows, linux]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: out
@@ -122,19 +124,20 @@ jobs:
 
       - run: ls -la out
 
+      # описание релиза = раздел «## X.Y.Z» из CHANGELOG.md + как поставить (.github/release-install.md);
+      # его же открывает «что нового» в Hunty, когда приходит обновление
+      - name: Описание релиза из CHANGELOG.md
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          awk -v h="## $V" '{ sub(/\r$/, "") } $0 == h { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "Что нового — в [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md)." > notes.md; fi
+          printf '\n' >> notes.md
+          cat .github/release-install.md >> notes.md
+          cat notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          body_path: notes.md
           generate_release_notes: true
-          body: |
-            **Windows 10/11** — `Hunty_…_x64-setup.exe` (установщик, админ не нужен) или `Hunty-portable.exe` (просто запустить).
-            Если SmartScreen пишет «Windows защитил ваш компьютер» → «Подробнее» → «Выполнить в любом случае» (exe не подписан).
-
-            **Linux** — `hunty-linux-x64.tar.gz`: один файл, интерфейс открывается в браузере.
-            ```
-            tar xzf hunty-linux-x64.tar.gz
-            ./hunty/hunty                         # запустить
-            ./hunty/hunty --install --autostart   # в меню приложений + автозапуск (по желанию)
-            ```
-
-            Сеть общая: Windows и Linux видят друг друга, друзья, группы и звонки — те же.
