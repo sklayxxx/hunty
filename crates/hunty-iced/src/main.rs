@@ -1,14 +1,17 @@
 //! Experimental native client. It intentionally does not replace the existing media UI.
+mod attachments;
 use hunty_core::{Handle, Opts};
+use iced::futures::SinkExt;
 use iced::{
     widget::{button, column, container, image, row, scrollable, text, text_input},
-    Color, Element, Font, Length, Task, Theme,
+    Color, Element, Font, Length, Subscription, Task, Theme,
 };
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 
 struct App {
     core: Option<Handle>,
+    changes: Option<tokio::sync::watch::Receiver<u64>>,
     state: Value,
     room: String,
     messages: Vec<Value>,
@@ -17,15 +20,24 @@ struct App {
     friend_code: String,
     own_code: String,
     group_name: String,
+    group_code: String,
+    profile_open: bool,
+    profile_saving: bool,
+    profile_nick: String,
+    profile_line: String,
+    profile_bio: String,
+    profile_game: String,
     reply: String,
     editing: String,
     pending_delete: String,
     error: String,
     sending: bool,
+    attachment_busy: bool,
+    notice: String,
 }
 #[derive(Clone, Debug)]
 enum Message {
-    Started(Result<Handle, String>),
+    Started(Result<(Handle, tokio::sync::watch::Receiver<u64>), String>),
     Tick,
     Snapshot(Result<(Value, String, Vec<Value>), String>),
     Room(String),
@@ -33,6 +45,15 @@ enum Message {
     Nick(String),
     FriendCode(String),
     GroupName(String),
+    GroupCode(String),
+    ProfileOpen,
+    ProfileClose,
+    ProfileNick(String),
+    ProfileLine(String),
+    ProfileBio(String),
+    ProfileGame(String),
+    SaveProfile,
+    ProfileSaved(Result<(), String>),
     Reply(String),
     Edit(String, String),
     DeleteConfirm(String),
@@ -42,6 +63,11 @@ enum Message {
     Register,
     OpenSelf,
     Send,
+    Attach,
+    AttachmentPicked(String, Option<PathBuf>),
+    AttachmentSent(Result<(), String>),
+    SaveAttachment(String, String),
+    AttachmentSaved(Result<Option<PathBuf>, String>),
     Sent(Result<(), String>, String, String),
     Done(Result<(), String>),
 }
@@ -60,7 +86,25 @@ fn data_dir() -> PathBuf {
                 .join("hunty-iced-preview")
         })
 }
-async fn start() -> Result<Handle, String> {
+fn refreshes_ui(event: &Value) -> bool {
+    matches!(
+        event["ev"].as_str(),
+        Some(
+            "msg"
+                | "msgs"
+                | "msg_upd"
+                | "me"
+                | "friend"
+                | "friend_removed"
+                | "presence"
+                | "room"
+                | "room_removed"
+                | "profile"
+                | "blocked"
+        )
+    )
+}
+async fn start() -> Result<(Handle, tokio::sync::watch::Receiver<u64>), String> {
     let dir = data_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // Same lock as hunty-node; hold it for the whole lifetime of the node.
@@ -75,11 +119,16 @@ async fn start() -> Result<Handle, String> {
     let (core, mut events) = hunty_core::start(dir, Opts::default())
         .await
         .map_err(|e| e.to_string())?;
+    let (changed, receiver) = tokio::sync::watch::channel(0_u64);
     tokio::spawn(async move {
         let _lock = lock;
-        while events.recv().await.is_some() {}
+        while let Some(event) = events.recv().await {
+            if refreshes_ui(&event) {
+                changed.send_modify(|n| *n = n.wrapping_add(1));
+            }
+        }
     });
-    Ok(core)
+    Ok((core, receiver))
 }
 fn snapshot(h: Handle, room: String) -> Task<Message> {
     Task::perform(
@@ -102,6 +151,7 @@ fn init() -> (App, Task<Message>) {
     (
         App {
             core: None,
+            changes: None,
             state: Value::Null,
             room: String::new(),
             messages: vec![],
@@ -110,19 +160,29 @@ fn init() -> (App, Task<Message>) {
             friend_code: String::new(),
             own_code: String::new(),
             group_name: String::new(),
+            group_code: String::new(),
+            profile_open: false,
+            profile_saving: false,
+            profile_nick: String::new(),
+            profile_line: String::new(),
+            profile_bio: String::new(),
+            profile_game: String::new(),
             reply: String::new(),
             editing: String::new(),
             pending_delete: String::new(),
             error: String::new(),
             sending: false,
+            attachment_busy: false,
+            notice: String::new(),
         },
         Task::perform(start(), Message::Started),
     )
 }
 fn update(app: &mut App, m: Message) -> Task<Message> {
     match m {
-        Message::Started(Ok(h)) => {
+        Message::Started(Ok((h, changes))) => {
             app.core = Some(h.clone());
+            app.changes = Some(changes);
             snapshot(h, app.room.clone())
         }
         Message::Started(Err(e)) => {
@@ -206,6 +266,82 @@ fn update(app: &mut App, m: Message) -> Task<Message> {
             app.group_name = s;
             Task::none()
         }
+        Message::GroupCode(s) => {
+            app.group_code = s;
+            Task::none()
+        }
+        Message::ProfileOpen => {
+            let p = &app.state["me"]["profile"];
+            app.profile_nick = p["nick"].as_str().unwrap_or("").to_string();
+            app.profile_line = p["line"].as_str().unwrap_or("").to_string();
+            app.profile_bio = p["bio"].as_str().unwrap_or("").to_string();
+            app.profile_game = p["game"].as_str().unwrap_or("").to_string();
+            app.profile_open = true;
+            Task::none()
+        }
+        Message::ProfileClose => {
+            if !app.profile_saving {
+                app.profile_open = false;
+            }
+            Task::none()
+        }
+        Message::ProfileNick(s) => {
+            if !app.profile_saving {
+                app.profile_nick = s;
+            }
+            Task::none()
+        }
+        Message::ProfileLine(s) => {
+            if !app.profile_saving {
+                app.profile_line = s;
+            }
+            Task::none()
+        }
+        Message::ProfileBio(s) => {
+            if !app.profile_saving {
+                app.profile_bio = s;
+            }
+            Task::none()
+        }
+        Message::ProfileGame(s) => {
+            if !app.profile_saving {
+                app.profile_game = s;
+            }
+            Task::none()
+        }
+        Message::SaveProfile => {
+            if app.profile_saving {
+                return Task::none();
+            }
+            let Some(core) = app.core.clone() else {
+                return Task::none();
+            };
+            app.profile_saving = true;
+            let cmd = json!({"cmd":"profile_set", "nick":app.profile_nick, "line":app.profile_line,
+                "bio":app.profile_bio, "game":app.profile_game});
+            Task::perform(
+                async move { core.cmd(cmd).await.map(|_| ()) },
+                Message::ProfileSaved,
+            )
+        }
+        Message::ProfileSaved(result) => {
+            app.profile_saving = false;
+            match result {
+                Ok(()) => {
+                    app.profile_open = false;
+                    app.error.clear();
+                    app.notice = "Профиль сохранён".into();
+                    app.core
+                        .clone()
+                        .map(|h| snapshot(h, app.room.clone()))
+                        .unwrap_or_else(Task::none)
+                }
+                Err(e) => {
+                    app.error = e;
+                    Task::none()
+                }
+            }
+        }
         Message::Reply(s) => {
             if !s.is_empty() {
                 app.editing.clear();
@@ -245,7 +381,7 @@ fn update(app: &mut App, m: Message) -> Task<Message> {
                 app.error.clear();
                 match action {
                     Action::OpenRoom => {
-                        if let Some(id) = v["id"].as_str() {
+                        if let Some(id) = v["id"].as_str().or_else(|| v["room"]["id"].as_str()) {
                             app.room = id.to_string();
                             app.messages.clear();
                             app.reply.clear();
@@ -296,6 +432,116 @@ fn update(app: &mut App, m: Message) -> Task<Message> {
                     Err(e) => Message::Done(Err(e)),
                 },
             )
+        }
+        Message::Attach => {
+            if app.attachment_busy || app.room.is_empty() {
+                return Task::none();
+            }
+            app.attachment_busy = true;
+            let room = app.room.clone();
+            Task::perform(
+                async move {
+                    let path = rfd::AsyncFileDialog::new()
+                        .pick_file()
+                        .await
+                        .map(|f| f.path().to_owned());
+                    (room, path)
+                },
+                |(room, path)| Message::AttachmentPicked(room, path),
+            )
+        }
+        Message::AttachmentPicked(room, path) => {
+            let Some(path) = path else {
+                app.attachment_busy = false;
+                return Task::none();
+            };
+            if app.room != room {
+                app.attachment_busy = false;
+                app.error = "Чат изменился: файл не отправлен".into();
+                return Task::none();
+            }
+            let Some(core) = app.core.clone() else {
+                app.attachment_busy = false;
+                return Task::none();
+            };
+            Task::perform(
+                async move {
+                    let data = tokio::task::spawn_blocking(move || attachments::send_data(&path))
+                        .await
+                        .map_err(|e| format!("Не удалось подготовить файл: {e}"))??;
+                    core.cmd(
+                        json!({"cmd":"send", "room":room, "kind":"file", "text":"", "data":data}),
+                    )
+                    .await
+                    .map(|_| ())
+                },
+                Message::AttachmentSent,
+            )
+        }
+        Message::AttachmentSent(result) => {
+            app.attachment_busy = false;
+            match result {
+                Ok(()) => {
+                    app.notice = "Файл отправлен".into();
+                    app.error.clear();
+                    app.core
+                        .clone()
+                        .map(|h| snapshot(h, app.room.clone()))
+                        .unwrap_or_else(Task::none)
+                }
+                Err(e) => {
+                    app.error = e;
+                    Task::none()
+                }
+            }
+        }
+        Message::SaveAttachment(id, name) => {
+            if app.attachment_busy || app.room.is_empty() {
+                return Task::none();
+            }
+            let Some(core) = app.core.clone() else {
+                return Task::none();
+            };
+            app.attachment_busy = true;
+            let room = app.room.clone();
+            Task::perform(
+                async move {
+                    let suggestion = attachments::safe_name(&name);
+                    let Some(file) = rfd::AsyncFileDialog::new()
+                        .set_file_name(&suggestion)
+                        .save_file()
+                        .await
+                    else {
+                        return Ok(None);
+                    };
+                    let path = file.path().to_owned();
+                    let value = core
+                        .cmd(json!({"cmd":"media", "room":room, "id":id}))
+                        .await?;
+                    let target = path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let bytes = attachments::decode_media(&value)?;
+                        std::fs::write(target, bytes)
+                            .map_err(|e| format!("Не удалось сохранить файл: {e}"))
+                    })
+                    .await
+                    .map_err(|e| format!("Не удалось сохранить файл: {e}"))??;
+                    Ok(Some(path))
+                },
+                Message::AttachmentSaved,
+            )
+        }
+        Message::AttachmentSaved(result) => {
+            app.attachment_busy = false;
+            match result {
+                Ok(Some(_)) => {
+                    app.notice = "Файл сохранён".into();
+                    app.error.clear();
+                }
+                Ok(None) => {}
+                Err(e) => app.error = e,
+            }
+            Task::none()
         }
         Message::Send => {
             if app.sending || app.draft.trim().is_empty() || app.room.is_empty() {
@@ -452,11 +698,56 @@ fn view(app: &App) -> Element<'_, Message> {
             .push(button("+ создать").on_press(Message::Command(
                 json!({"cmd":"room_create", "name":app.group_name}),
                 Action::OpenRoom,
+            )))
+            .push(text("Вступить в группу").size(13))
+            .push(text_input("hunty://join/...", &app.group_code).on_input(Message::GroupCode))
+            .push(button("Вступить").on_press(Message::Command(
+                json!({"cmd":"room_join", "code":app.group_code}),
+                Action::OpenRoom,
             )));
+        let selected_group = app.state["rooms"]
+            .as_array()
+            .and_then(|rooms| rooms.iter().find(|r| r["id"].as_str() == Some(&app.room)))
+            .map(|r| r["kind"] == "group")
+            .unwrap_or(false);
+        if selected_group {
+            sidebar = sidebar.push(
+                button("Код приглашения в группу").on_press(Message::Command(
+                    json!({"cmd":"room_invite", "room":app.room}),
+                    Action::OwnCode,
+                )),
+            );
+        }
     }
     sidebar = sidebar
         .push(text(" "))
         .push(text(format!("● @{me}")).color(accent));
+    if app.state["me"]["onboarded"] == true {
+        if app.profile_open {
+            sidebar = sidebar
+                .push(text("Профиль").size(16))
+                .push(text_input("Ник", &app.profile_nick).on_input(Message::ProfileNick))
+                .push(text_input("Статус", &app.profile_line).on_input(Message::ProfileLine))
+                .push(text_input("О себе", &app.profile_bio).on_input(Message::ProfileBio))
+                .push(
+                    text_input("Во что играешь", &app.profile_game).on_input(Message::ProfileGame),
+                )
+                .push(
+                    row![
+                        button(if app.profile_saving {
+                            "Сохраняю…"
+                        } else {
+                            "Сохранить"
+                        })
+                        .on_press(Message::SaveProfile),
+                        button("Отмена").on_press(Message::ProfileClose)
+                    ]
+                    .spacing(5),
+                );
+        } else {
+            sidebar = sidebar.push(button("Профиль").on_press(Message::ProfileOpen));
+        }
+    }
     let current_name = app.state["rooms"]
         .as_array()
         .and_then(|rooms| rooms.iter().find(|r| r["id"].as_str() == Some(&app.room)))
@@ -472,6 +763,8 @@ fn view(app: &App) -> Element<'_, Message> {
     .spacing(10);
     if !app.error.is_empty() {
         body = body.push(text(format!("! {}", app.error)).color(Color::from_rgb8(255, 115, 125)));
+    } else if !app.notice.is_empty() {
+        body = body.push(text(&app.notice).size(13));
     }
     if app.core.is_none() {
         body = body.push(text("Подключение ядра…"));
@@ -502,10 +795,19 @@ fn view(app: &App) -> Element<'_, Message> {
                     .unwrap_or("участник")
                     .to_string()
             };
+            let attachment = matches!(m["kind"].as_str(), Some("file" | "image"));
+            let name = m["data"]["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("вложение");
             let msg = m["text"]
                 .as_str()
                 .filter(|x| !x.is_empty())
-                .unwrap_or("[вложение или событие — открой в прежнем клиенте]");
+                .unwrap_or(if attachment {
+                    name
+                } else {
+                    "[событие или стикер]"
+                });
             let id = m["id"].as_str().unwrap_or("").to_string();
             let mine = m["from"].as_str() == app.state["me"]["peer"].as_str();
             let mut actions = row![
@@ -516,6 +818,12 @@ fn view(app: &App) -> Element<'_, Message> {
                 ))
             ]
             .spacing(5);
+            if attachment {
+                actions = actions.push(
+                    button("Сохранить файл")
+                        .on_press(Message::SaveAttachment(id.clone(), name.to_string())),
+                );
+            }
             if mine && m["kind"] == "text" {
                 actions = actions
                     .push(button("править").on_press(Message::Edit(id.clone(), msg.to_string())));
@@ -598,6 +906,12 @@ fn view(app: &App) -> Element<'_, Message> {
         }
         body = body.push(scrollable(msgs).height(Length::Fill)).push(
             row![
+                button(if app.attachment_busy {
+                    "…"
+                } else {
+                    "Файл"
+                })
+                .on_press(Message::Attach),
                 text_input("Написать сообщение…", &app.draft)
                     .on_input(Message::Draft)
                     .on_submit(Message::Send)
@@ -647,8 +961,12 @@ fn view(app: &App) -> Element<'_, Message> {
                     friends = friends.push(
                         row![
                             text(format!("+ {nick}")).width(Length::Fill),
-                            button("✓").on_press(Message::Command(
+                            button("Принять").on_press(Message::Command(
                                 json!({"cmd":"friend_accept","peer":peer}),
+                                Action::Refresh
+                            )),
+                            button("Отклонить").on_press(Message::Command(
+                                json!({"cmd":"friend_decline","peer":peer}),
                                 Action::Refresh
                             ))
                         ]
@@ -756,7 +1074,22 @@ fn main() -> iced::Result {
             )
         })
         .default_font(Font::DEFAULT)
-        .subscription(|_: &App| iced::time::every(Duration::from_secs(3)).map(|_| Message::Tick))
+        .subscription(|app: &App| {
+            let fallback = iced::time::every(Duration::from_secs(15)).map(|_| Message::Tick);
+            let Some(mut changes) = app.changes.clone() else {
+                return fallback;
+            };
+            let events = iced::stream::channel(1, move |mut output| async move {
+                while changes.changed().await.is_ok() {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    changes.borrow_and_update();
+                    if output.send(Message::Tick).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            Subscription::batch([fallback, Subscription::run_with_id("core-events", events)])
+        })
         .window_size((1100.0, 720.0))
         .run_with(init)
 }
@@ -764,6 +1097,41 @@ fn main() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_relevant_events_refresh_chat() {
+        for ev in ["msg", "msg_upd", "friend", "presence", "room", "me"] {
+            assert!(refreshes_ui(&json!({"ev":ev})), "{ev}");
+        }
+        for ev in ["rtc", "voice", "log", "net", "unknown"] {
+            assert!(!refreshes_ui(&json!({"ev":ev})), "{ev}");
+        }
+    }
+    #[test]
+    fn join_already_member_opens_nested_room_response() {
+        let (mut app, _) = init();
+        app.room = "old".into();
+        let _ = update(
+            &mut app,
+            Message::CommandResult(
+                Ok(json!({"already":true,"room":{"id":"group"}})),
+                Action::OpenRoom,
+            ),
+        );
+        assert_eq!(app.room, "group");
+    }
+    #[test]
+    fn profile_draft_is_not_changed_during_save() {
+        let (mut app, _) = init();
+        app.state = json!({"me":{"profile":{"nick":"old","line":"hello"}}});
+        let _ = update(&mut app, Message::ProfileOpen);
+        assert_eq!(app.profile_nick, "old");
+        let _ = update(&mut app, Message::ProfileLine("new".into()));
+        app.profile_saving = true;
+        let _ = update(&mut app, Message::ProfileLine("late".into()));
+        let _ = update(&mut app, Message::ProfileClose);
+        assert_eq!(app.profile_line, "new");
+        assert!(app.profile_open);
+    }
     #[test]
     fn room_labels() {
         assert_eq!(room_title(&json!({"kind":"self"})), "избранное");
