@@ -666,12 +666,12 @@ fn view(app: &App) -> Element<'_, Message> {
     if let Some(rooms) = app.state["rooms"].as_array() {
         for r in rooms {
             let id = r["id"].as_str().unwrap_or("").to_string();
-            let marker = if id == app.room { "●" } else { "" };
+            let title = room_title(r);
             let unread = r["unread"].as_u64().unwrap_or(0);
             let name = if unread > 0 {
-                format!("{marker} {} ({unread})", room_title(r))
+                format!("{title} ({unread})")
             } else {
-                format!("{marker} {}", room_title(r))
+                title.clone()
             };
             let ava = r["members"]
                 .as_array()
@@ -680,7 +680,7 @@ fn view(app: &App) -> Element<'_, Message> {
                 .unwrap_or("");
             sidebar = sidebar.push(
                 button(
-                    row![avatar(&name, ava), text(name.clone()).size(15)]
+                    row![avatar(&title, ava), text(name.clone()).size(15)]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),
                 )
@@ -779,7 +779,7 @@ fn view(app: &App) -> Element<'_, Message> {
             .push(button("Создать").on_press(Message::Register));
     } else if app.room.is_empty() {
         body = body.push(text(
-            "Выбери чат справа. Звонки, видео и вложения пока доступны только в прежнем интерфейсе.",
+            "Выбери чат справа. Звонки и просмотр видео пока доступны только в прежнем интерфейсе.",
         ));
     } else {
         let mut msgs = column![].spacing(12);
@@ -871,20 +871,16 @@ fn view(app: &App) -> Element<'_, Message> {
                     .and_then(|f| f["profile"]["ava"].as_str())
                     .unwrap_or("")
             };
-            msgs = msgs.push(
-                row![
-                    avatar(&who, ava),
-                    column![
-                        text(who).size(14).color(accent),
-                        text(quote).size(13),
-                        text(msg.to_owned()).size(16),
-                        text(reactions).size(13),
-                        actions
-                    ]
-                    .spacing(3)
-                ]
-                .spacing(12),
-            );
+            let mut content = column![text(who.clone()).size(14).color(accent)].spacing(3);
+            if !quote.is_empty() {
+                content = content.push(text(quote).size(13));
+            }
+            content = content.push(text(msg.to_owned()).size(16));
+            if !reactions.is_empty() {
+                content = content.push(text(reactions).size(13));
+            }
+            content = content.push(actions);
+            msgs = msgs.push(row![avatar(&who, ava), content].spacing(12));
         }
         if !app.editing.is_empty() {
             body = body.push(
