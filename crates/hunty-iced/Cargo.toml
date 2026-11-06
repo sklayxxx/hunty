@@ -14,3 +14,12 @@ dirs = "6"
 base64 = "0.22"
 mime_guess = "2"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+gstreamer = { version = "0.22", optional = true }
+gstreamer-app = { version = "0.22", optional = true }
+gstreamer-video = { version = "0.22", optional = true }
+tempfile = { version = "3", optional = true }
+url = { version = "2", optional = true }
+
+[features]
+default = []
+native-video = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:tempfile", "dep:url"]

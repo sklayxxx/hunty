@@ -1,5 +1,7 @@
 //! Experimental native client. It intentionally does not replace the existing media UI.
 mod attachments;
+#[cfg(feature = "native-video")]
+mod video;
 use hunty_core::{Handle, Opts};
 use iced::futures::SinkExt;
 use iced::{
@@ -9,6 +11,26 @@ use iced::{
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 
+#[cfg(feature = "native-video")]
+struct ActiveVideo {
+    player: video::Player,
+    room: String,
+    id: String,
+    frame: Option<image::Handle>,
+    position: f32,
+    duration: f32,
+    paused: bool,
+    seeking: bool,
+}
+#[cfg(feature = "native-video")]
+fn video_time(seconds: f32) -> String {
+    let seconds = if seconds.is_finite() {
+        seconds.max(0.0) as u64
+    } else {
+        0
+    };
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
 struct App {
     core: Option<Handle>,
     changes: Option<tokio::sync::watch::Receiver<u64>>,
@@ -34,6 +56,12 @@ struct App {
     sending: bool,
     attachment_busy: bool,
     notice: String,
+    #[cfg(feature = "native-video")]
+    video: Option<ActiveVideo>,
+    #[cfg(feature = "native-video")]
+    video_loading: bool,
+    #[cfg(feature = "native-video")]
+    video_request: u64,
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -68,6 +96,20 @@ enum Message {
     AttachmentSent(Result<(), String>),
     SaveAttachment(String, String),
     AttachmentSaved(Result<Option<PathBuf>, String>),
+    #[cfg(feature = "native-video")]
+    PlayVideo(String),
+    #[cfg(feature = "native-video")]
+    VideoLoaded(String, String, u64, Result<Vec<u8>, String>),
+    #[cfg(feature = "native-video")]
+    VideoTick,
+    #[cfg(feature = "native-video")]
+    VideoToggle,
+    #[cfg(feature = "native-video")]
+    VideoSeek(f32),
+    #[cfg(feature = "native-video")]
+    VideoSeekCommit,
+    #[cfg(feature = "native-video")]
+    VideoClose,
     Sent(Result<(), String>, String, String),
     Done(Result<(), String>),
 }
@@ -174,6 +216,12 @@ fn init() -> (App, Task<Message>) {
             sending: false,
             attachment_busy: false,
             notice: String::new(),
+            #[cfg(feature = "native-video")]
+            video: None,
+            #[cfg(feature = "native-video")]
+            video_loading: false,
+            #[cfg(feature = "native-video")]
+            video_request: 0,
         },
         Task::perform(start(), Message::Started),
     )
@@ -240,6 +288,12 @@ fn update(app: &mut App, m: Message) -> Task<Message> {
             }
         }
         Message::Room(room) => {
+            #[cfg(feature = "native-video")]
+            {
+                app.video = None;
+                app.video_loading = false;
+                app.video_request = app.video_request.wrapping_add(1);
+            }
             app.room = room;
             app.messages.clear();
             app.reply.clear();
@@ -382,6 +436,12 @@ fn update(app: &mut App, m: Message) -> Task<Message> {
                 match action {
                     Action::OpenRoom => {
                         if let Some(id) = v["id"].as_str().or_else(|| v["room"]["id"].as_str()) {
+                            #[cfg(feature = "native-video")]
+                            {
+                                app.video = None;
+                                app.video_loading = false;
+                                app.video_request = app.video_request.wrapping_add(1);
+                            }
                             app.room = id.to_string();
                             app.messages.clear();
                             app.reply.clear();
@@ -541,6 +601,127 @@ fn update(app: &mut App, m: Message) -> Task<Message> {
                 Ok(None) => {}
                 Err(e) => app.error = e,
             }
+            Task::none()
+        }
+        #[cfg(feature = "native-video")]
+        Message::PlayVideo(id) => {
+            if app.video_loading || app.room.is_empty() {
+                return Task::none();
+            }
+            let Some(core) = app.core.clone() else {
+                return Task::none();
+            };
+            app.video = None;
+            app.video_loading = true;
+            app.video_request = app.video_request.wrapping_add(1);
+            let token = app.video_request;
+            let room = app.room.clone();
+            Task::perform(
+                async move {
+                    let data = core.cmd(json!({"cmd":"media", "room":room, "id":id})).await;
+                    let result = match data {
+                        Ok(value) => {
+                            tokio::task::spawn_blocking(move || attachments::decode_media(&value))
+                                .await
+                                .map_err(|e| format!("Не удалось открыть клип: {e}"))
+                                .and_then(|x| x)
+                        }
+                        Err(e) => Err(e),
+                    };
+                    (room, id, token, result)
+                },
+                |(room, id, token, result)| Message::VideoLoaded(room, id, token, result),
+            )
+        }
+        #[cfg(feature = "native-video")]
+        Message::VideoLoaded(room, id, token, result) => {
+            if token != app.video_request || room != app.room {
+                return Task::none();
+            }
+            app.video_loading = false;
+            match result {
+                Ok(bytes) => {
+                    app.error.clear();
+                    app.video = Some(ActiveVideo {
+                        player: video::Player::start(bytes, false),
+                        room,
+                        id,
+                        frame: None,
+                        position: 0.0,
+                        duration: 0.0,
+                        paused: false,
+                        seeking: false,
+                    });
+                }
+                Err(e) => app.error = e,
+            }
+            Task::none()
+        }
+        #[cfg(feature = "native-video")]
+        Message::VideoTick => {
+            let mut error = None;
+            if let Some(active) = &mut app.video {
+                if let Some(frame) = active.player.frame() {
+                    active.frame = Some(image::Handle::from_rgba(
+                        frame.width,
+                        frame.height,
+                        frame.pixels,
+                    ));
+                }
+                while let Some(event) = active.player.event() {
+                    match event {
+                        video::Event::Progress { position, duration } => {
+                            if !active.seeking {
+                                active.position = position as f32;
+                            }
+                            active.duration = duration as f32;
+                        }
+                        video::Event::Ended => active.paused = true,
+                        video::Event::Error(e) => error = Some(e),
+                    }
+                }
+            }
+            if let Some(e) = error {
+                app.video = None;
+                app.error = e;
+            }
+            Task::none()
+        }
+        #[cfg(feature = "native-video")]
+        Message::VideoToggle => {
+            if let Some(active) = &mut app.video {
+                if active.paused {
+                    active.player.send(video::Control::Play);
+                } else {
+                    active.player.send(video::Control::Pause);
+                }
+                active.paused = !active.paused;
+            }
+            Task::none()
+        }
+        #[cfg(feature = "native-video")]
+        Message::VideoSeek(position) => {
+            if let Some(active) = &mut app.video {
+                active.seeking = true;
+                active.position = position.clamp(0.0, active.duration.max(0.0));
+            }
+            Task::none()
+        }
+        #[cfg(feature = "native-video")]
+        Message::VideoSeekCommit => {
+            if let Some(active) = &mut app.video {
+                active
+                    .player
+                    .send(video::Control::Seek(active.position as f64));
+                active.seeking = false;
+            }
+            Task::none()
+        }
+        #[cfg(feature = "native-video")]
+        Message::VideoClose => {
+            app.video = None;
+            app.video_loading = false;
+            app.video_request = app.video_request.wrapping_add(1);
             Task::none()
         }
         Message::Send => {
@@ -778,9 +959,12 @@ fn view(app: &App) -> Element<'_, Message> {
             )
             .push(button("Создать").on_press(Message::Register));
     } else if app.room.is_empty() {
-        body = body.push(text(
-            "Выбери чат справа. Звонки и просмотр видео пока доступны только в прежнем интерфейсе.",
-        ));
+        #[cfg(feature = "native-video")]
+        let message = "Выбери чат справа. Звонки и демонстрация экрана пока доступны только в прежнем интерфейсе.";
+        #[cfg(not(feature = "native-video"))]
+        let message =
+            "Выбери чат справа. Звонки и просмотр видео пока доступны только в прежнем интерфейсе.";
+        body = body.push(text(message));
     } else {
         let mut msgs = column![].spacing(12);
         for m in &app.messages {
@@ -822,6 +1006,22 @@ fn view(app: &App) -> Element<'_, Message> {
                 actions = actions.push(
                     button("Сохранить файл")
                         .on_press(Message::SaveAttachment(id.clone(), name.to_string())),
+                );
+            }
+            #[cfg(feature = "native-video")]
+            if m["kind"] == "file"
+                && m["data"]["mime"]
+                    .as_str()
+                    .map(|x| x.starts_with("video/"))
+                    .unwrap_or(false)
+            {
+                actions = actions.push(
+                    button(if app.video_loading {
+                        "Загрузка…"
+                    } else {
+                        "Смотреть"
+                    })
+                    .on_press(Message::PlayVideo(id.clone())),
                 );
             }
             if mine && m["kind"] == "text" {
@@ -876,6 +1076,53 @@ fn view(app: &App) -> Element<'_, Message> {
                 content = content.push(text(quote).size(13));
             }
             content = content.push(text(msg.to_owned()).size(16));
+            #[cfg(feature = "native-video")]
+            if let Some(active) = app
+                .video
+                .as_ref()
+                .filter(|v| v.id == id && v.room == app.room)
+            {
+                let frame: Element<'_, Message> = match &active.frame {
+                    Some(frame) => image(frame.clone())
+                        .width(420)
+                        .height(236)
+                        .content_fit(iced::ContentFit::Contain)
+                        .into(),
+                    None => container(text("Загрузка видео…"))
+                        .width(420)
+                        .height(100)
+                        .center_x(420)
+                        .center_y(100)
+                        .into(),
+                };
+                let duration = active.duration.max(0.1);
+                content = content.push(frame).push(
+                    row![
+                        button(if active.paused {
+                            "Играть"
+                        } else {
+                            "Пауза"
+                        })
+                        .on_press(Message::VideoToggle),
+                        iced::widget::slider(
+                            0.0..=duration,
+                            active.position.clamp(0.0, duration),
+                            Message::VideoSeek
+                        )
+                        .on_release(Message::VideoSeekCommit)
+                        .width(220),
+                        text(format!(
+                            "{} / {}",
+                            video_time(active.position),
+                            video_time(active.duration)
+                        ))
+                        .size(12),
+                        button("Закрыть").on_press(Message::VideoClose)
+                    ]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
+                );
+            }
             if !reactions.is_empty() {
                 content = content.push(text(reactions).size(13));
             }
@@ -1071,20 +1318,26 @@ fn main() -> iced::Result {
         })
         .default_font(Font::DEFAULT)
         .subscription(|app: &App| {
-            let fallback = iced::time::every(Duration::from_secs(15)).map(|_| Message::Tick);
-            let Some(mut changes) = app.changes.clone() else {
-                return fallback;
-            };
-            let events = iced::stream::channel(1, move |mut output| async move {
-                while changes.changed().await.is_ok() {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    changes.borrow_and_update();
-                    if output.send(Message::Tick).await.is_err() {
-                        break;
+            let mut subscriptions =
+                vec![iced::time::every(Duration::from_secs(15)).map(|_| Message::Tick)];
+            if let Some(mut changes) = app.changes.clone() {
+                let events = iced::stream::channel(1, move |mut output| async move {
+                    while changes.changed().await.is_ok() {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        changes.borrow_and_update();
+                        if output.send(Message::Tick).await.is_err() {
+                            break;
+                        }
                     }
-                }
-            });
-            Subscription::batch([fallback, Subscription::run_with_id("core-events", events)])
+                });
+                subscriptions.push(Subscription::run_with_id("core-events", events));
+            }
+            #[cfg(feature = "native-video")]
+            if app.video.is_some() {
+                subscriptions
+                    .push(iced::time::every(Duration::from_millis(33)).map(|_| Message::VideoTick));
+            }
+            Subscription::batch(subscriptions)
         })
         .window_size((1100.0, 720.0))
         .run_with(init)
