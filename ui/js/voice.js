@@ -1,3 +1,4 @@
+import { makeShareUpdater } from './share-sender.js';
 // Голос: WebRTC mesh (до 6), сигналинг через P2P-ядро, мик/звук/вебка/демка, звонки в личке, кнопки F1–F6
 import { $, $$, esc, ic, dur, pick, clamp, mobile, reduce, prefs, setPref, bus, sleep, short } from './core.js';
 import { api } from './api.js';
@@ -132,52 +133,24 @@ async function applyBitrate(P) {
   try {
     const s = P.micTx; if (s && s.track) { const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}]; p.encodings[0].maxBitrate = (+prefs.bitrate || 64) * 1000; p.encodings[0].priority = p.encodings[0].networkPriority = 'high'; await s.setParameters(p); }
   } catch (_) {}
-  for (const tx of P.scrTx || []) if (tx.track && tx.track.kind === 'video') await shareParams(tx, P.peer);
-  applyWatch(P);
+  await applyWatch(P);
 }
-/* ---------- демка: кодек, битрейт, «не ужимать» ----------
-   По умолчанию WebRTC шлёт 1080p не больше ~2.5 Мбит/с и при нагрузке на проц сам режет картинку до 720p
-   и ниже. Поэтому: битрейт под выбранное качество, видеокарта кодирует сама (если умеет), разрешение
-   и fps держим, а не ужимаем молча. Что реально уходит — видно в плашке «Ты показываешь экран». */
+/* Демонстрация: ограничение битрейта — потолок, а не требование. При нагрузке
+   WebRTC должен иметь возможность снизить и разрешение, и частоту кадров. */
 const SHARE_MBIT = { 720: 3.5, 1080: 6, 1440: 10 };
 export function shareProfile(res = +prefs.shareRes || 1080, fps = +prefs.shareFps || 30) {
   const base = SHARE_MBIT[res] || (res > 1080 ? 10 : res > 720 ? 6 : 3.5);
   const motion = prefs.shareHint === 'motion' || fps >= 50;
   return { res, fps, motion, maxBitrate: Math.round(base * (fps >= 50 ? 1.5 : fps <= 15 ? .7 : 1) * 1e6) };
 }
-async function shareParams(tx, peer) {
-  const q = shareProfile();
-  const set = async deg => {
-    const p = tx.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-    const e = p.encodings[0];
-    e.maxBitrate = q.maxBitrate; e.maxFramerate = q.fps; e.scaleResolutionDownBy = 1; e.priority = e.networkPriority = 'high';
-    if (peer) e.active = watchesMe(peer);
-    p.degradationPreference = deg;
-    await tx.setParameters(p);
-  };
-  // 60 fps и «плавно» — держим и разрешение, и кадры (новый Chrome/WebView2); не умеет — держим разрешение
-  for (const deg of q.motion ? ['maintain-framerate-and-resolution', 'maintain-resolution'] : ['maintain-resolution']) {
-    try { await set(deg); return; } catch (e) { if (deg === 'maintain-resolution') console.warn('share params', e); }
-  }
-}
-/* ---------- демку получают только те, кто её реально смотрит ----------
-   В P2P у каждого зрителя свой кодировщик и своя копия потока. Кто не смотрит (свернул Hunty, смотрит чужую
-   демку, нажал «Не смотреть») — его копия на паузе: меньше нагрузка на проц/видеокарту и на исходящий интернет.
-   Зритель сам говорит, чью демку смотрит (ev «watch»); нет записи — старая версия Hunty, шлём как раньше. */
-V.watch = new Map(); // peer → чью демку смотрит ('' — ничью)
+V.watch = new Map();
 export const watchesMe = p => !V.watch.has(p) || V.watch.get(p) === myId();
-/** кто смотрит демку sharer (для «смотрят: …») */
 export const watchersOf = sharer => Object.keys(voiceIn(V.room)).filter(p => p !== sharer && p !== myId() && (!V.watch.has(p) || V.watch.get(p) === sharer));
+// setParameters использует transactionId: параллельные изменения одной дорожки
+// конфликтуют и могли оставить трансляцию на паузе. Обновляем каждый sender последовательно.
+const updateShareSender = makeShareUpdater(shareProfile, watchesMe);
 async function applyWatch(P) {
-  const on = watchesMe(P.peer);
-  for (const tx of P.scrTx || []) {
-    if (!tx.track) continue;
-    try {
-      const p = tx.getParameters(); if (!p.encodings || !p.encodings.length) continue;
-      if (p.encodings.every(e => e.active !== false) === on) continue;
-      p.encodings.forEach(e => { e.active = on; }); await tx.setParameters(p);
-    } catch (e) { console.warn('watch', e); }
-  }
+  await Promise.all((P.scrTx || []).filter(tx => tx.track).map(tx => updateShareSender(tx, P.peer)));
 }
 bus.on('ev:watch', v => {
   if (!V.room || v.room !== V.room || !v.from || v.from === myId()) return;
@@ -216,8 +189,10 @@ function preferCodec(P, tx, mime) {
 function addScreen(P) {
   P.scrTx = V.scrS.getTracks().map(t => P.pc.addTrack(t, V.scrS));
   const vt = P.scrTx.find(tx => tx.track && tx.track.kind === 'video');
-  if (vt) { preferCodec(P, vt, V.scrCodec); shareParams(vt); }
-  setTimeout(() => applyBitrate(P), 1500);
+  if (vt) preferCodec(P, vt, V.scrCodec);
+  applyWatch(P);
+  // После согласования некоторые браузеры только тогда создают encodings.
+  setTimeout(() => { if (V.peers.get(P.peer) === P && P.scrTx) applyWatch(P); }, 1500);
 }
 /* что реально уходит друзьям: разрешение, fps, кодек, во что упирается — раз в 2 с, пока показываешь */
 export const shareStat = { h: 0, fps: 0, codec: '', hw: false, lim: '', n: 0 };
@@ -668,7 +643,8 @@ export async function startShare(o = {}) {
   if (V.share) stopShare(true);
   V.scrS = s; V.share = true; V.drawOk = o.draw ?? (prefs.shareDraw !== 'none');
   const vt0 = s.getVideoTracks()[0]; if (vt0) { vt0.contentHint = shareProfile(h, fps).motion ? 'motion' : 'detail'; vt0.onended = () => stopShare(); }
-  V.scrCodec = await codecP.catch(() => '');
+  // Не держим запуск заложником зависшего драйвера MediaCapabilities.
+  V.scrCodec = await Promise.race([codecP.catch(() => ''), new Promise(resolve => setTimeout(() => resolve(''), 800))]);
   if (!V.room || V.scrS !== s) return;
   Object.assign(shareStat, { h: 0, fps: 0, codec: '', hw: false, lim: '', n: 0 });
   sendMetaAll();

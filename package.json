@@ -10,7 +10,10 @@
     "test:intro": "node tests/intro.mjs",
     "test:layout": "node tests/layout.mjs",
     "test:settings": "node tests/settings.mjs",
-    "docs:shots": "node tests/docs.mjs"
+    "docs:shots": "node tests/docs.mjs",
+    "test:share-sender": "node tests/share-sender.mjs",
+    "test:webm-seek": "node tests/webm-seek.mjs",
+    "test:media-range": "node tests/media-range.mjs"
   },
   "devDependencies": {
     "playwright": "^1.48.0"

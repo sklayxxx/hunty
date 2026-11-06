@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/hunty-core", "crates/hunty-node", "src-tauri"]
+members = ["crates/hunty-core", "crates/hunty-node", "src-tauri", "crates/hunty-iced"]
 default-members = ["crates/hunty-core", "crates/hunty-node"]
 
 [workspace.package]

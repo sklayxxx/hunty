@@ -461,12 +461,18 @@ async fn media(s: &mut TcpStream, c: &Ctx, head: &str, rest: &str, query: &str) 
     let img = (mime.starts_with("image/") || mime.starts_with("video/") || mime.starts_with("audio/")) && !dl;
     let ct = if img { mime.as_str() } else { "application/octet-stream" };
     let disp = if img { String::new() } else { format!("Content-Disposition: attachment; filename*=UTF-8''{}\r\n", disp_name(&name)) };
+    let len = body.len();
+    let (status, slice, content_range) = match hunty_core::media_range::parse(header(head, "range"), len) {
+        hunty_core::media_range::Range::Full => ("200 OK", &body[..], String::new()),
+        hunty_core::media_range::Range::Partial { start, end } => ("206 Partial Content", &body[start..=end], format!("Content-Range: bytes {start}-{end}/{len}\r\n")),
+        hunty_core::media_range::Range::Unsatisfiable => ("416 Range Not Satisfiable", &body[0..0], format!("Content-Range: bytes */{len}\r\n")),
+    };
     let hdr = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {ct}\r\nContent-Length: {}\r\n{disp}Cache-Control: private, max-age=31536000, immutable\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'\r\nCross-Origin-Resource-Policy: same-origin\r\nConnection: close\r\n\r\n",
-        body.len()
+        "HTTP/1.1 {status}\r\nContent-Type: {ct}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n{content_range}{disp}Cache-Control: private, max-age=31536000, immutable\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'\r\nCross-Origin-Resource-Policy: same-origin\r\nConnection: close\r\n\r\n",
+        slice.len()
     );
     let _ = s.write_all(hdr.as_bytes()).await;
-    let _ = s.write_all(&body).await;
+    if !head.starts_with("HEAD ") { let _ = s.write_all(slice).await; }
 }
 
 /// статика интерфейса: с диска (--ui, удобно править) или вшитая в бинарник

@@ -5,6 +5,7 @@
 //! UI общается с ядром JSON-командами (`Handle::cmd`) и получает поток событий.
 mod api;
 pub mod codes;
+pub mod media_range;
 mod intro;
 mod node;
 pub mod proto;
@@ -17,7 +18,7 @@ use serde_json::Value;
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Handle {
     tx: mpsc::UnboundedSender<node::Cmd>,
 }

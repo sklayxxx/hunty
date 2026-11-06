@@ -95,7 +95,7 @@ fn hunty_reveal(path: String) -> Result<(), String> {
 
 /// hmedia://localhost/<хата>/<id> (в Windows — https://hmedia.localhost/…): картинки из чата
 /// грузятся как обычные файлы, а не гигантскими data:-строками через IPC.
-fn media_protocol(app: AppHandle, path: String, responder: tauri::UriSchemeResponder) {
+fn media_protocol(app: AppHandle, path: String, range: Option<String>, head: bool, responder: tauri::UriSchemeResponder) {
     use tauri::http::Response;
     tauri::async_runtime::spawn(async move {
         let p = path.trim_start_matches('/').replace("%2F", "/").replace("%2f", "/");
@@ -111,14 +111,25 @@ fn media_protocol(app: AppHandle, path: String, responder: tauri::UriSchemeRespo
             Some((v.get("mime")?.as_str()?.to_string(), b))
         });
         let resp = match decoded {
-            Some((mime, body)) => Response::builder()
-                .status(200)
-                .header("Content-Type", if mime.starts_with("image/") || mime.starts_with("video/") || mime.starts_with("audio/") { mime.as_str() } else { "application/octet-stream" })
-                .header("Access-Control-Allow-Origin", "*")
-                .header("Cache-Control", "private, max-age=31536000, immutable")
-                .header("X-Content-Type-Options", "nosniff")
-                .header("Content-Security-Policy", "sandbox; default-src 'none'")
-                .body(body),
+            Some((mime, body)) => {
+                let len = body.len();
+                let (status, bytes, content_range) = match hunty_core::media_range::parse(range.as_deref(), len) {
+                    hunty_core::media_range::Range::Full => (200, body, None),
+                    hunty_core::media_range::Range::Partial { start, end } => (206, body[start..=end].to_vec(), Some(format!("bytes {start}-{end}/{len}"))),
+                    hunty_core::media_range::Range::Unsatisfiable => (416, Vec::new(), Some(format!("bytes */{len}"))),
+                };
+                let mut builder = Response::builder().status(status)
+                    .header("Content-Type", if mime.starts_with("image/") || mime.starts_with("video/") || mime.starts_with("audio/") { mime.as_str() } else { "application/octet-stream" })
+                    .header("Content-Length", bytes.len().to_string())
+                    .header("Accept-Ranges", "bytes")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Range, Content-Length")
+                    .header("Cache-Control", "private, max-age=31536000, immutable")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Content-Security-Policy", "sandbox; default-src 'none'");
+                if let Some(cr) = content_range { builder = builder.header("Content-Range", cr); }
+                builder.body(if head { Vec::new() } else { bytes })
+            },
             None => Response::builder().status(404).header("Access-Control-Allow-Origin", "*").body(Vec::new()),
         };
         match resp {
@@ -629,7 +640,9 @@ fn main() {
     let app = b
         .plugin(guard)
         .register_asynchronous_uri_scheme_protocol("hmedia", |ctx, req, responder| {
-            media_protocol(ctx.app_handle().clone(), req.uri().path().to_string(), responder);
+            let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_owned);
+            let head = req.method() == tauri::http::Method::HEAD;
+            media_protocol(ctx.app_handle().clone(), req.uri().path().to_string(), range, head, responder);
         })
         .manage(core.clone())
         .on_window_event(|w, ev| {
