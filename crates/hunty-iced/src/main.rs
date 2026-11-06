@@ -1,7 +1,7 @@
 //! Experimental native client. It intentionally does not replace the existing media UI.
 use hunty_core::{Handle, Opts};
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input},
+    widget::{button, column, container, image, row, scrollable, text, text_input},
     Color, Element, Font, Length, Task, Theme,
 };
 use serde_json::{json, Value};
@@ -341,32 +341,105 @@ fn room_title(r: &Value) -> String {
             .to_string(),
     }
 }
+fn avatar<'a>(name: &str, source: &str) -> Element<'a, Message> {
+    let icon: Option<&'static [u8]> = match source {
+        "mob:steve" => Some(include_bytes!("../assets/mobs/steve.png").as_slice()),
+        "mob:alex" => Some(include_bytes!("../assets/mobs/alex.png").as_slice()),
+        "mob:creeper" => Some(include_bytes!("../assets/mobs/creeper.png").as_slice()),
+        "mob:zombie" => Some(include_bytes!("../assets/mobs/zombie.png").as_slice()),
+        "mob:skeleton" => Some(include_bytes!("../assets/mobs/skeleton.png").as_slice()),
+        "mob:wither" => Some(include_bytes!("../assets/mobs/wither.png").as_slice()),
+        "mob:enderman" => Some(include_bytes!("../assets/mobs/enderman.png").as_slice()),
+        "mob:pig" => Some(include_bytes!("../assets/mobs/pig.png").as_slice()),
+        "mob:villager" => Some(include_bytes!("../assets/mobs/villager.png").as_slice()),
+        "mob:cow" => Some(include_bytes!("../assets/mobs/cow.png").as_slice()),
+        "mob:slime" => Some(include_bytes!("../assets/mobs/slime.png").as_slice()),
+        "mob:blaze" => Some(include_bytes!("../assets/mobs/blaze.png").as_slice()),
+        "mob:spider" => Some(include_bytes!("../assets/mobs/spider.png").as_slice()),
+        "mob:golem" => Some(include_bytes!("../assets/mobs/golem.png").as_slice()),
+        "mob:fox" => Some(include_bytes!("../assets/mobs/fox.png").as_slice()),
+        "mob:axolotl" => Some(include_bytes!("../assets/mobs/axolotl.png").as_slice()),
+        "mob:drowned" => Some(include_bytes!("../assets/mobs/drowned.png").as_slice()),
+        "mob:sheep" => Some(include_bytes!("../assets/mobs/sheep.png").as_slice()),
+        "mob:bee" => Some(include_bytes!("../assets/mobs/bee.png").as_slice()),
+        "mob:piglin" => Some(include_bytes!("../assets/mobs/piglin.png").as_slice()),
+        "mob:ghast" => Some(include_bytes!("../assets/mobs/ghast.png").as_slice()),
+        "mob:chicken" => Some(include_bytes!("../assets/mobs/chicken.png").as_slice()),
+        "mob:panda" => Some(include_bytes!("../assets/mobs/panda.png").as_slice()),
+        "mob:frog" => Some(include_bytes!("../assets/mobs/frog.png").as_slice()),
+        "mob:wolf" => Some(include_bytes!("../assets/mobs/wolf.png").as_slice()),
+        "mob:cat" => Some(include_bytes!("../assets/mobs/cat.png").as_slice()),
+        "mob:mooshroom" => Some(include_bytes!("../assets/mobs/mooshroom.png").as_slice()),
+        "mob:witch" => Some(include_bytes!("../assets/mobs/witch.png").as_slice()),
+        "mob:pillager" => Some(include_bytes!("../assets/mobs/pillager.png").as_slice()),
+        "mob:pumpkin" => Some(include_bytes!("../assets/mobs/pumpkin.png").as_slice()),
+        "mob:parrot" => Some(include_bytes!("../assets/mobs/parrot.png").as_slice()),
+        "mob:allay" => Some(include_bytes!("../assets/mobs/allay.png").as_slice()),
+        "mob:warden" => Some(include_bytes!("../assets/mobs/warden.png").as_slice()),
+        "mob:strider" => Some(include_bytes!("../assets/mobs/strider.png").as_slice()),
+        "mob:shulker" => Some(include_bytes!("../assets/mobs/shulker.png").as_slice()),
+        "mob:rabbit" => Some(include_bytes!("../assets/mobs/rabbit.png").as_slice()),
+        "mob:husk" => Some(include_bytes!("../assets/mobs/husk.png").as_slice()),
+        "mob:magma" => Some(include_bytes!("../assets/mobs/magma.png").as_slice()),
+        "mob:llama" => Some(include_bytes!("../assets/mobs/llama.png").as_slice()),
+        _ => None,
+    };
+    if let Some(bytes) = icon {
+        return image(image::Handle::from_bytes(bytes))
+            .width(38)
+            .height(38)
+            .into();
+    }
+    let initial = name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
+    container(text(initial).size(20).color(Color::from_rgb8(20, 24, 23)))
+        .width(38)
+        .height(38)
+        .center_x(38)
+        .center_y(38)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgb8(133, 218, 181).into()),
+            border: iced::Border {
+                radius: 11.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
 fn view(app: &App) -> Element<'_, Message> {
     let accent = Color::from_rgb8(109, 227, 179);
     let me = app.state["me"]["profile"]["nick"]
         .as_str()
         .unwrap_or("гость");
-    let mut sidebar = column![
-        text("HUNTY_ //").size(24).color(accent),
-        text("P2P  ·  native").size(13),
-        text(" "),
-        text("[ ЧАТЫ ]").size(14).color(accent)
-    ]
-    .spacing(8);
+    let mut sidebar = column![text("Чаты").size(17)].spacing(8);
     if let Some(rooms) = app.state["rooms"].as_array() {
         for r in rooms {
             let id = r["id"].as_str().unwrap_or("").to_string();
-            let marker = if id == app.room { ">" } else { "#" };
+            let marker = if id == app.room { "●" } else { "" };
             let unread = r["unread"].as_u64().unwrap_or(0);
             let name = if unread > 0 {
                 format!("{marker} {} ({unread})", room_title(r))
             } else {
                 format!("{marker} {}", room_title(r))
             };
+            let ava = r["members"]
+                .as_array()
+                .and_then(|m| m.iter().find(|v| v["me"] != true))
+                .and_then(|v| v["ava"].as_str())
+                .unwrap_or("");
             sidebar = sidebar.push(
-                button(text(name).size(15))
-                    .width(Length::Fill)
-                    .on_press(Message::Room(id)),
+                button(
+                    row![avatar(&name, ava), text(name.clone()).size(15)]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
+                )
+                .width(Length::Fill)
+                .on_press(Message::Room(id)),
             );
         }
     }
@@ -374,7 +447,7 @@ fn view(app: &App) -> Element<'_, Message> {
         sidebar = sidebar
             .push(button("+ избранное").on_press(Message::OpenSelf))
             .push(text(" "))
-            .push(text("[ НОВАЯ ГРУППА ]").size(13).color(accent))
+            .push(text("Новая группа").size(13))
             .push(text_input("название", &app.group_name).on_input(Message::GroupName))
             .push(button("+ создать").on_press(Message::Command(
                 json!({"cmd":"room_create", "name":app.group_name}),
@@ -384,9 +457,16 @@ fn view(app: &App) -> Element<'_, Message> {
     sidebar = sidebar
         .push(text(" "))
         .push(text(format!("● @{me}")).color(accent));
+    let current_name = app.state["rooms"]
+        .as_array()
+        .and_then(|rooms| rooms.iter().find(|r| r["id"].as_str() == Some(&app.room)))
+        .map(room_title)
+        .unwrap_or_else(|| "Чаты".to_string());
     let mut body = column![
-        text("# HUNTY  /  ЧАТ").size(23).color(accent),
-        text("Нативный клиент · экспериментальная версия").size(13),
+        text(current_name).size(20),
+        text("Нативный клиент · тестовая версия")
+            .size(13)
+            .color(Color::from_rgb8(144, 144, 151)),
         text(" ")
     ]
     .spacing(10);
@@ -406,7 +486,7 @@ fn view(app: &App) -> Element<'_, Message> {
             .push(button("Создать").on_press(Message::Register));
     } else if app.room.is_empty() {
         body = body.push(text(
-            "Выбери чат слева. Звонки, видео и вложения пока доступны только в прежнем интерфейсе.",
+            "Выбери чат справа. Звонки, видео и вложения пока доступны только в прежнем интерфейсе.",
         ));
     } else {
         let mut msgs = column![].spacing(12);
@@ -429,7 +509,7 @@ fn view(app: &App) -> Element<'_, Message> {
             let id = m["id"].as_str().unwrap_or("").to_string();
             let mine = m["from"].as_str() == app.state["me"]["peer"].as_str();
             let mut actions = row![
-                button("↩").on_press(Message::Reply(id.clone())),
+                button("Ответить").on_press(Message::Reply(id.clone())),
                 button("+1").on_press(Message::Command(
                     json!({"cmd":"react","room":app.room,"id":id,"e":"👍"}),
                     Action::Refresh
@@ -470,15 +550,32 @@ fn view(app: &App) -> Element<'_, Message> {
                         .join("  ")
                 })
                 .unwrap_or_default();
+            let ava = if mine {
+                app.state["me"]["profile"]["ava"].as_str().unwrap_or("")
+            } else {
+                app.state["friends"]
+                    .as_array()
+                    .and_then(|friends| {
+                        friends
+                            .iter()
+                            .find(|f| f["peer"].as_str() == m["from"].as_str())
+                    })
+                    .and_then(|f| f["profile"]["ava"].as_str())
+                    .unwrap_or("")
+            };
             msgs = msgs.push(
-                column![
-                    text(format!("{who} >")).size(14).color(accent),
-                    text(quote).size(13),
-                    text(msg.to_owned()).size(16),
-                    text(reactions).size(13),
-                    actions
+                row![
+                    avatar(&who, ava),
+                    column![
+                        text(who).size(14).color(accent),
+                        text(quote).size(13),
+                        text(msg.to_owned()).size(16),
+                        text(reactions).size(13),
+                        actions
+                    ]
+                    .spacing(3)
                 ]
-                .spacing(3),
+                .spacing(12),
             );
         }
         if !app.editing.is_empty() {
@@ -515,7 +612,7 @@ fn view(app: &App) -> Element<'_, Message> {
             .spacing(8),
         );
     }
-    let mut friends = column![text("[ ДРУЗЬЯ ]").size(15).color(accent), text(" ")].spacing(8);
+    let mut friends = column![text("Друзья").size(15), text(" ")].spacing(8);
     if let Some(list) = app.state["friends"].as_array() {
         for f in list {
             let peer = f["peer"].as_str().unwrap_or("");
@@ -566,7 +663,7 @@ fn view(app: &App) -> Element<'_, Message> {
     if app.state["me"]["onboarded"] == true {
         friends = friends
             .push(text(" "))
-            .push(text("[ ДОБАВИТЬ ]").size(13).color(accent))
+            .push(text("Добавить друга").size(13))
             .push(text_input("hunty://add/...", &app.friend_code).on_input(Message::FriendCode))
             .push(button("отправить заявку").on_press(Message::Command(
                 json!({"cmd":"friend_add","code":app.friend_code}),
@@ -582,37 +679,83 @@ fn view(app: &App) -> Element<'_, Message> {
     }
     fn panel(c: container::Container<'_, Message>) -> container::Container<'_, Message> {
         c.style(|_| container::Style {
-            background: Some(Color::from_rgb8(24, 28, 36).into()),
+            background: Some(Color::from_rgb8(22, 22, 25).into()),
+            border: iced::Border {
+                color: Color::from_rgb8(61, 61, 66),
+                width: 1.0,
+                radius: 18.0.into(),
+            },
             ..Default::default()
         })
     }
-    let layout = row![
+    let mut tabs = row![].spacing(8);
+    if let Some(rooms) = app.state["rooms"].as_array() {
+        for r in rooms.iter().take(5) {
+            let id = r["id"].as_str().unwrap_or("").to_string();
+            tabs = tabs.push(button(text(room_title(r))).on_press(Message::Room(id)));
+        }
+    }
+    let top = row![
         panel(
-            container(scrollable(sidebar))
-                .width(220)
-                .height(Length::Fill)
-                .padding(16)
+            container(tabs)
+                .width(Length::Fill)
+                .height(52)
+                .padding([8, 12])
         ),
-        container(body)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(20),
         panel(
-            container(scrollable(friends))
-                .width(245)
-                .height(Length::Fill)
-                .padding(16)
+            container(text("Hunty").size(20))
+                .width(285)
+                .height(52)
+                .padding([10, 16])
         )
-    ];
+    ]
+    .spacing(8);
+    let right = column![sidebar, friends].spacing(12);
+    let layout = column![
+        top,
+        row![
+            panel(
+                container(body)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(18)
+            ),
+            panel(
+                container(scrollable(right))
+                    .width(285)
+                    .height(Length::Fill)
+                    .padding(14)
+            )
+        ]
+        .spacing(8)
+        .height(Length::Fill)
+    ]
+    .spacing(8);
     container(layout)
         .width(Length::Fill)
         .height(Length::Fill)
+        .padding(10)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgb8(7, 7, 9).into()),
+            ..Default::default()
+        })
         .into()
 }
 fn main() -> iced::Result {
     iced::application("Hunty // iced preview", update, view)
-        .theme(|_| Theme::Dark)
-        .default_font(Font::MONOSPACE)
+        .theme(|_| {
+            Theme::custom(
+                "Hunty".into(),
+                iced::theme::Palette {
+                    background: Color::from_rgb8(22, 22, 25),
+                    text: Color::from_rgb8(235, 235, 239),
+                    primary: Color::from_rgb8(70, 70, 77),
+                    success: Color::from_rgb8(106, 207, 154),
+                    danger: Color::from_rgb8(220, 90, 90),
+                },
+            )
+        })
+        .default_font(Font::DEFAULT)
         .subscription(|_: &App| iced::time::every(Duration::from_secs(3)).map(|_| Message::Tick))
         .window_size((1100.0, 720.0))
         .run_with(init)
